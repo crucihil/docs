@@ -1,0 +1,153 @@
+---
+title: "crucihil init"
+description: "Interactive wizard — create a rig TOML by answering prompts"
+---
+
+## Synopsis
+
+```bash
+crucihil init [--output-dir <path>]
+```
+
+## Description
+
+`crucihil init` is an interactive wizard that creates a rig TOML configuration by walking you through a series of prompts. It is "Path B" of the three rig setup paths:
+
+- **Path A** — Write the TOML manually (use the [Rig Configuration reference](/rig-config/overview))
+- **Path B** — Use `crucihil init` (this command — guided prompts, no AI needed)
+- **Path C** — Use `crucihil discover` (AI-assisted, probes hardware automatically)
+
+All three paths produce the same TOML format and work identically with `crucihil run` and `crucihil agent`.
+
+## Options
+
+<ParamField path="--output-dir" type="path" default="rigs/">
+  Directory to write the new rig TOML into. Created if it does not exist. Short form: `-d`.
+</ParamField>
+
+## What the wizard collects
+
+The wizard prompts for:
+
+1. **Rig name** — used as the filename (`<name>.toml`) and as the identifier in the cloud dashboard
+2. **Platform** — hardware platform name (e.g. `orin_nx`, `s32g`, `custom`)
+3. **Backend mode** — `virtual` (no hardware) or `hardware`
+4. **CAN interfaces** — auto-detected from `ip link`; you confirm or add manually. For each interface: bitrate, CAN-FD, and backend (`socketcan`, `peak`, `virtual`)
+5. **Ethernet interfaces** — interface name and local IP for DoIP/SOME/IP
+6. **Power backend** — `virtual_power`, `gpio_relay`, or skip
+7. **GPIO** — optional GPIO pin definitions
+8. **DBC paths** — paths to `.dbc` files for CAN and Ethernet signal definitions
+9. **ECU entries** — logical address, transport (`doip` or `can_isotp`), boot timeout
+
+## Example session
+
+```
+$ crucihil init
+
+CruciHiL Rig Setup Wizard
+──────────────────────────
+
+Rig name [my_rig]: bench_01
+Platform [custom]: orin_nx
+Backend mode [virtual/hardware]: hardware
+
+── CAN interfaces ───────────────────────────────
+Detected: can0, can1
+
+Configure can0? [Y/n]: y
+  Bitrate [500000]: 500000
+  CAN-FD? [y/N]: n
+  Backend [socketcan/peak/virtual]: peak
+
+Configure can1? [Y/n]: y
+  Bitrate [500000]: 250000
+  CAN-FD? [y/N]: n
+  Backend [socketcan/peak/virtual]: socketcan
+
+── Ethernet interfaces ──────────────────────────
+Configure ethernet interface? [y/N]: y
+  Interface name: eth1
+  Local IP: 169.254.0.1
+
+── Power rail ───────────────────────────────────
+Add a power rail? [y/N]: y
+  Rail name [ecu_main]: ecu_main
+  Backend [virtual_power/gpio_relay]: virtual_power
+  Default state [on/off]: off
+
+── DBC files ────────────────────────────────────
+CAN DBC path [defs/vehicle_can.dbc]: defs/powertrain.dbc
+ETH DBC path (optional):
+
+── ECUs ─────────────────────────────────────────
+Add an ECU? [y/N]: y
+  ECU name [Engine_ECU]: Orin_ECU
+  Logical address (hex) [0x0001]: 0x0001
+  Transport [doip/can_isotp]: doip
+  DoIP interface: eth1
+  Boot timeout (s) [5.0]: 8.0
+
+Writing rigs/bench_01.toml...
+✓ Done.
+
+Test it:
+  crucihil run --suite suites/smoke.yaml --rig rigs/bench_01.toml
+```
+
+## Output
+
+The wizard writes a valid TOML file to the output directory. The file is immediately usable with `crucihil run` and `crucihil agent`.
+
+Example output:
+
+```toml
+[rig]
+name         = "bench_01"
+platform     = "orin_nx"
+spec_version = "1.0"
+backend      = "hardware"
+
+[rig.can.can0]
+interface = "can0"
+bitrate   = 500000
+fd        = false
+backend   = "peak"
+
+[rig.can.can1]
+interface = "can1"
+bitrate   = 250000
+fd        = false
+backend   = "socketcan"
+
+[rig.ethernet.eth1]
+interface      = "eth1"
+ip             = "169.254.0.1"
+someip_backend = "python-someip"
+doip_backend   = "python-doip"
+
+[rig.power.ecu_main]
+backend = "virtual_power"
+default = "off"
+
+[rig.ecus.orin_ecu]
+name            = "Orin_ECU"
+logical_address = 0x0001
+transport       = "doip"
+doip_interface  = "eth1"
+boot_timeout    = 8.0
+
+[rig.definitions]
+can_dbc = "defs/powertrain.dbc"
+```
+
+## Tips
+
+- If you are not sure about a value, accept the default and edit the TOML later.
+- Boot timeouts, bitrates, and IP addresses are platform-specific. They belong in the TOML — never hardcode them in test code.
+- After running the wizard, validate the TOML by running a test suite against the virtual backend: `crucihil run --suite suites/smoke.yaml --rig rigs/virtual.toml`.
+
+## See also
+
+- [`crucihil discover`](/cli/discover) — AI-assisted setup that probes hardware automatically
+- [Rig Configuration Reference](/rig-config/overview) — all TOML fields documented
+- [Rig Backends](/rig-config/backends) — available backends for CAN, power, and GPIO

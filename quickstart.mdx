@@ -1,0 +1,148 @@
+---
+title: "Quickstart"
+description: "Run your first CruciHiL test in five minutes — no hardware required"
+---
+
+This guide takes you from zero to a passing test using only the virtual backend. No CAN hardware, no ECU, no special OS configuration needed.
+
+## Prerequisites
+
+- Python 3.10 or later
+- pip
+
+## Step 1 — Install
+
+```bash
+pip install crucihil
+```
+
+Verify the install:
+
+```bash
+crucihil version
+```
+
+You should see something like `crucihil 0.15.0`.
+
+## Step 2 — Scaffold the hello_world example
+
+The `scaffold` command drops a self-contained, runnable example into your current directory:
+
+```bash
+crucihil scaffold --example hello_world
+```
+
+This creates:
+
+```
+hello_world/
+├── rigs/
+│   └── virtual.toml          # virtual rig — no hardware needed
+├── defs/
+│   └── vehicle_can.dbc       # sample DBC with a few messages
+├── suites/
+│   └── hello_world.yaml      # YAML suite manifest
+└── tests/
+    └── hello_world.py        # Python test functions
+```
+
+<Info>
+The `hello_world` example uses only the virtual backend. All CAN messages are simulated in-process — no physical bus is required.
+</Info>
+
+## Step 3 — Run the suite
+
+```bash
+cd hello_world
+crucihil run --suite suites/hello_world.yaml --rig rigs/virtual.toml
+```
+
+You should see output like:
+
+```
+Suite  : hello_world v1.0.0  (3 tests)
+Rig    : rigs/virtual.toml
+
+  ✓ [PASS   ] engine_startup  (0.012s)
+  ✓ [PASS   ] can_heartbeat   (0.008s)
+  ✓ [PASS   ] always_pass     (0.001s)
+
+3 passed · 0 failed · 0 blocked · 0 errored  (0.021s total)
+```
+
+All three tests pass against the virtual backend.
+
+## Step 4 — View the results
+
+Add `--html report.html` to get a self-contained HTML report:
+
+```bash
+crucihil run \
+  --suite suites/hello_world.yaml \
+  --rig rigs/virtual.toml \
+  --html report.html
+```
+
+Open `report.html` in any browser. It includes per-test status, duration, error messages, and signal trace data.
+
+For JUnit XML (CI integration):
+
+```bash
+crucihil run \
+  --suite suites/hello_world.yaml \
+  --rig rigs/virtual.toml \
+  --output results.xml
+```
+
+## Step 5 — Explore the test code
+
+Open `tests/hello_world.py`. A typical test looks like:
+
+```python
+async def test_engine_startup(rig: Rig) -> None:
+    # The simulation already has EngineData broadcasting at 1500 RPM
+    # (set up in the YAML setup block)
+    result = await rig.can.expect(
+        signal="EngineData.RPM",
+        condition=lambda v: v > 800,
+        timeout=2.0,
+    )
+    assert result.passed, result.fail_msg
+```
+
+Notice:
+- The test is an `async def` function that takes `rig: Rig`.
+- It uses `rig.can.expect(...)` — no CAN interface name, no backend-specific code.
+- The `Rig` object is injected by the framework; tests never construct it.
+
+The YAML manifest (`suites/hello_world.yaml`) declares the setup steps that run before this function:
+
+```yaml
+tests:
+  - id: engine_startup
+    name: "ECU reaches idle RPM after ignition"
+    setup:
+      - sim.set:   { signal: "EngineData.RPM", value: 1500.0 }
+      - sim.start: EngineData
+    teardown:
+      - sim.stop: EngineData
+    module: tests.hello_world
+    function: test_engine_startup
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Write your first real test" icon="pen" href="/test-authoring/python-api">
+    Full Rig Python API reference — send, expect, fault injection, sim control.
+  </Card>
+  <Card title="Configure a real rig" icon="wrench" href="/rig-config/overview">
+    Connect to real CAN hardware — SocketCAN, PEAK, or any custom backend.
+  </Card>
+  <Card title="Analyze a firmware component" icon="magnifying-glass-chart" href="/cli/analyze">
+    Use `crucihil analyze` to extract the signal interface of a C/C++ SWC.
+  </Card>
+  <Card title="Connect an AI assistant" icon="robot" href="/mcp/overview">
+    Wire Claude or Copilot to your rig and test history via MCP.
+  </Card>
+</CardGroup>

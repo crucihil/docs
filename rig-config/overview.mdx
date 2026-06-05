@@ -1,0 +1,305 @@
+---
+title: "Rig Configuration"
+description: "Full reference for the rig TOML config file — all sections, all fields"
+---
+
+The rig TOML is the single source of truth for hardware configuration. It maps logical names to real hardware, specifies backends, and controls timeouts. Test code never contains hardware details — they all live here.
+
+## Full example
+
+```toml
+[rig]
+name         = "bench_01"
+platform     = "orin_nx"
+spec_version = "1.0"
+backend      = "hardware"
+
+[rig.can.powertrain]
+interface = "can0"
+bitrate   = 500000
+fd        = false
+backend   = "socketcan"
+
+[rig.can.chassis]
+interface = "can1"
+bitrate   = 250000
+fd        = false
+backend   = "peak"
+
+[rig.ethernet.chassis_eth]
+interface      = "eth1"
+ip             = "169.254.0.1"
+someip_backend = "python-someip"
+doip_backend   = "python-doip"
+
+[rig.power.ecu_main]
+backend = "virtual_power"
+default = "off"
+
+[rig.gpio]
+ignition_enable = { pin = 22, direction = "out", default = false, backend = "virtual_gpio" }
+fault_indicator = { pin = 27, direction = "in",  backend = "virtual_gpio" }
+reset_line      = { pin = 24, direction = "out", default = false, backend = "virtual_gpio" }
+
+[rig.ecus.engine_ecu]
+name            = "Engine_ECU"
+logical_address = 0x0001
+transport       = "doip"
+doip_interface  = "chassis_eth"
+power_rail      = "ecu_main"
+boot_timeout    = 8.0
+
+[rig.definitions]
+can_dbc = "defs/powertrain.dbc"
+eth_dbc = "defs/chassis.dbc"
+
+[rig.cloud]
+url                = "https://your-server.example.com"
+registration_token = "REGISTRATION_TOKEN_HERE"
+```
+
+## `[rig]` — root section
+
+<ParamField path="name" type="string" required>
+  Rig identifier. Used in the cloud dashboard, agent hello message, and as the TOML filename convention. Letters, numbers, hyphens (e.g. `bench_01`, `orin-bench-prod`).
+</ParamField>
+
+<ParamField path="platform" type="string" required>
+  Hardware platform name. Informational only — used in dashboard display. Examples: `orin_nx`, `s32g`, `rcar_s4`, `virtual`, `custom`.
+</ParamField>
+
+<ParamField path="spec_version" type="string" required>
+  TOML schema version. Always `"1.0"` for current releases.
+</ParamField>
+
+<ParamField path="backend" type="string" required>
+  Top-level backend hint. `"virtual"` enables virtual backends for all interfaces. `"hardware"` requires each interface to specify its own backend.
+</ParamField>
+
+## `[rig.can.<name>]` — CAN interfaces
+
+Each `[rig.can.<name>]` section defines one CAN interface. The `<name>` key (e.g. `powertrain`, `chassis`) is used in rig.can routing — it is never referenced from test code.
+
+<ParamField path="interface" type="string" required>
+  OS interface name (e.g. `can0`, `can1`, `PCAN_USBBUS1`).
+</ParamField>
+
+<ParamField path="bitrate" type="integer" required>
+  Nominal bitrate in bits/second. Common values: `125000`, `250000`, `500000`, `1000000`.
+</ParamField>
+
+<ParamField path="fd" type="boolean" default="false">
+  Enable CAN-FD mode. Set to `true` for CAN-FD buses. Requires an FD-capable adapter and backend.
+</ParamField>
+
+<ParamField path="backend" type="string" required>
+  Backend driver. Options: `virtual`, `socketcan`, `peak`. See [Backends](/rig-config/backends).
+</ParamField>
+
+### Multiple CAN interfaces
+
+You can define as many CAN interfaces as your rig has:
+
+```toml
+[rig.can.powertrain]
+interface = "can0"
+bitrate   = 500000
+backend   = "socketcan"
+
+[rig.can.chassis]
+interface = "can1"
+bitrate   = 250000
+backend   = "socketcan"
+
+[rig.can.diagnostic]
+interface = "can2"
+bitrate   = 500000
+backend   = "socketcan"
+```
+
+## `[rig.ethernet.<name>]` — Ethernet interfaces
+
+Used for DoIP and SOME/IP communication.
+
+<ParamField path="interface" type="string" required>
+  OS interface name (e.g. `eth0`, `eth1`).
+</ParamField>
+
+<ParamField path="ip" type="string" required>
+  Local IP address to bind to. For DoIP targets on a dedicated link: `169.254.0.1` (link-local).
+</ParamField>
+
+<ParamField path="someip_backend" type="string" required>
+  SOME/IP backend. Options: `python-someip`, `virtual`. See [Backends](/rig-config/backends).
+</ParamField>
+
+<ParamField path="doip_backend" type="string" required>
+  DoIP backend. Options: `python-doip`, `virtual`. See [Backends](/rig-config/backends).
+</ParamField>
+
+## `[rig.power.<name>]` — Power rails
+
+<ParamField path="backend" type="string" required>
+  Power backend. Options: `virtual_power`, `gpio_relay`, `bench_psu`. See [Backends](/rig-config/backends).
+</ParamField>
+
+<ParamField path="default" type="string" default='"off"'>
+  Initial power state when the rig connects. `"on"` or `"off"`.
+</ParamField>
+
+<ParamField path="gpio_pin" type="integer">
+  GPIO pin number for `gpio_relay` backend.
+</ParamField>
+
+<ParamField path="port" type="string">
+  Serial port for `bench_psu` backend (e.g. `/dev/ttyUSB0`).
+</ParamField>
+
+<ParamField path="model" type="string">
+  Instrument model for `bench_psu` backend (e.g. `keysight_e3631a`).
+</ParamField>
+
+## `[rig.gpio]` — GPIO pins
+
+GPIO pins are declared as inline tables under `[rig.gpio]`:
+
+```toml
+[rig.gpio]
+ignition_enable = { pin = 22, direction = "out", default = false, backend = "virtual_gpio" }
+fault_indicator = { pin = 27, direction = "in",  backend = "virtual_gpio" }
+reset_line      = { pin = 24, direction = "out", default = false, backend = "virtual_gpio" }
+```
+
+Each pin entry accepts:
+
+<ParamField path="pin" type="integer" required>
+  GPIO pin number (BCM numbering on Raspberry Pi; board-specific elsewhere).
+</ParamField>
+
+<ParamField path="direction" type="string" required>
+  `"in"` or `"out"`.
+</ParamField>
+
+<ParamField path="default" type="boolean" default="false">
+  Initial state for output pins. Ignored for input pins.
+</ParamField>
+
+<ParamField path="backend" type="string" default='"virtual_gpio"'>
+  GPIO backend. Options: `virtual_gpio`, `rpi_gpio`. See [Backends](/rig-config/backends).
+</ParamField>
+
+## `[rig.ecus.<name>]` — ECU definitions
+
+Each ECU has a logical address and a transport. The framework uses this to route UDS commands and manage power lifecycle.
+
+<ParamField path="name" type="string" required>
+  Human-readable ECU name (e.g. `Engine_ECU`, `Orin_NX`). Shown in dashboard and reports.
+</ParamField>
+
+<ParamField path="logical_address" type="integer" required>
+  UDS logical address (hex notation allowed: `0x0001`).
+</ParamField>
+
+<ParamField path="transport" type="string" required>
+  Transport for UDS. `"doip"` or `"can_isotp"`.
+</ParamField>
+
+<ParamField path="doip_interface" type="string">
+  Key of the `[rig.ethernet.<name>]` interface to use for DoIP. Required when `transport = "doip"`.
+</ParamField>
+
+<ParamField path="can_interface" type="string">
+  Key of the `[rig.can.<name>]` interface to use for ISO-TP. Required when `transport = "can_isotp"`.
+</ParamField>
+
+<ParamField path="power_rail" type="string">
+  Key of a `[rig.power.<name>]` rail. If set, `rig.ecu.power_on()` and `rig.ecu.power_off()` control this rail.
+</ParamField>
+
+<ParamField path="boot_timeout" type="float" default="5.0">
+  Seconds to wait for the ECU to become responsive after power-on. Platform-specific values belong here — never in test code (Rule R6). Example: virtual ECU `0.1`, Nvidia Orin `8.0`.
+</ParamField>
+
+## `[rig.definitions]` — DBC files
+
+<ParamField path="can_dbc" type="string">
+  Path to the CAN DBC file. Relative to the directory containing the TOML file.
+</ParamField>
+
+<ParamField path="eth_dbc" type="string">
+  Path to the Ethernet (SOME/IP) DBC/descriptor file.
+</ParamField>
+
+<Info>
+The key names `can_dbc` and `eth_dbc` are also used by `crucihil analyze` to infer the interface type of each signal corpus. Use these exact key names.
+</Info>
+
+## `[rig.cloud]` — Cloud connection (optional)
+
+<ParamField path="url" type="string">
+  HTTP(S) base URL of the CruciHiL control plane.
+</ParamField>
+
+<ParamField path="registration_token" type="string">
+  One-time token used for agent self-registration on first boot. The agent exchanges this for a permanent API key and stores it in `~/.crucihil/credentials.toml`. Once registered, this field is no longer needed.
+</ParamField>
+
+## Virtual rig (no hardware)
+
+The virtual rig uses in-process simulated backends for all interfaces. Use it for CI and local development.
+
+```toml
+[rig]
+name         = "Virtual_Sim"
+platform     = "virtual"
+spec_version = "1.0"
+backend      = "virtual"
+
+[rig.can.can0]
+interface = "can0"
+bitrate   = 500000
+fd        = false
+backend   = "virtual"
+
+[rig.ethernet.eth0]
+interface      = "eth0"
+ip             = "127.0.0.1"
+someip_backend = "python-someip"
+doip_backend   = "virtual"
+
+[rig.power.ecu_main]
+backend = "virtual_power"
+default = "on"
+
+[rig.gpio]
+ignition_enable = { pin = 22, direction = "out", default = false, backend = "virtual_gpio" }
+
+[rig.ecus.ecu_main]
+name            = "Virtual_ECU"
+logical_address = 0x0001
+transport       = "doip"
+doip_interface  = "eth0"
+power_rail      = "ecu_main"
+boot_timeout    = 0.1
+
+[rig.definitions]
+can_dbc = "defs/vehicle_can.dbc"
+```
+
+## Configuration validation
+
+CruciHiL validates the TOML with Pydantic at rig initialization — before any test runs. Schema errors produce a `ConfigurationError` that marks the run as `BLOCKED` (not `FAIL`). This means a config typo never appears as a firmware regression.
+
+You can validate a TOML without running any tests:
+
+```bash
+python -c "from crucihil.hal.rig import Rig; Rig.from_toml('rigs/bench.toml')"
+```
+
+No error means the config is valid.
+
+## See also
+
+- [Rig Backends](/rig-config/backends) — backend options for each interface type
+- [`crucihil init`](/cli/init) — interactive wizard to create a rig TOML
+- [`crucihil discover`](/cli/discover) — AI-assisted TOML generation

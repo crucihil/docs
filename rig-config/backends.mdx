@@ -1,0 +1,259 @@
+---
+title: "Rig Backends"
+description: "Available backends for CAN, Ethernet, power, GPIO, and DoIP"
+---
+
+Each interface section in the rig TOML specifies a `backend` field. This determines which driver is used at runtime. Switching backends requires only a TOML change — test code is unaffected.
+
+## CAN backends
+
+### `virtual`
+
+In-process simulation. No hardware or OS dependencies. Frames are passed through an in-memory queue.
+
+```toml
+[rig.can.can0]
+interface = "can0"
+bitrate   = 500000
+backend   = "virtual"
+```
+
+Best for: CI, local development, unit tests, any environment without CAN hardware.
+
+### `socketcan`
+
+Linux SocketCAN. Uses the `python-can` SocketCAN interface. Requires the CAN interface to be configured in the OS before connecting:
+
+```bash
+sudo ip link set can0 type can bitrate 500000
+sudo ip link set can0 up
+```
+
+```toml
+[rig.can.powertrain]
+interface = "can0"
+bitrate   = 500000
+fd        = false
+backend   = "socketcan"
+```
+
+Extra required:
+
+```bash
+pip install 'crucihil[socketcan]'
+```
+
+Best for: Linux bench machines with SocketCAN adapters (Kvaser, EMS, or any native CAN interface).
+
+### `peak`
+
+PEAK PCAN adapters (PCAN-USB, PCAN-PCI). Uses the `python-can` PCAN interface.
+
+```toml
+[rig.can.powertrain]
+interface = "PCAN_USBBUS1"
+bitrate   = 500000
+fd        = false
+backend   = "peak"
+```
+
+For CAN-FD:
+
+```toml
+[rig.can.powertrain]
+interface = "PCAN_USBBUS1"
+bitrate   = 500000
+fd        = true
+backend   = "peak"
+```
+
+Extra required:
+
+```bash
+pip install 'crucihil[peak]'
+```
+
+Best for: Windows and Linux benches with PEAK USB or PCIe adapters.
+
+### Custom backend (module path)
+
+Any Python class implementing `AbstractCANBackend` can be loaded by specifying its fully-qualified module path:
+
+```toml
+[rig.can.custom_bus]
+interface = "COM3"
+bitrate   = 500000
+backend   = "myorg.my_can_adapter.MyCANBackend"
+```
+
+CruciHiL resolves the path via `importlib`. The class must implement:
+
+```python
+from crucihil.hal.backends.base import AbstractCANBackend
+
+class MyCANBackend(AbstractCANBackend):
+    async def connect(self) -> None: ...
+    async def disconnect(self) -> None: ...
+    async def send(self, arb_id: int, data: bytes) -> None: ...
+    async def receive(self, timeout: float = 1.0) -> CANFrame: ...
+    async def set_bitrate(self, bitrate: int) -> None: ...
+```
+
+Generate a stub with:
+
+```bash
+crucihil scaffold --adapter can --name MyCANAdapter
+```
+
+## DoIP backends
+
+### `virtual`
+
+In-process DoIP simulation. Responds to entity discovery and routing activation without network hardware.
+
+```toml
+[rig.ethernet.eth0]
+interface      = "eth0"
+ip             = "127.0.0.1"
+doip_backend   = "virtual"
+someip_backend = "python-someip"
+```
+
+### `python-doip`
+
+Real DoIP transport using the `python-doip` library. Requires an actual DoIP gateway on the network.
+
+```toml
+[rig.ethernet.chassis_eth]
+interface      = "eth1"
+ip             = "169.254.0.1"
+doip_backend   = "python-doip"
+someip_backend = "python-someip"
+```
+
+Best for: ECUs with DoIP-capable diagnostic interfaces (many Tier 1 ECUs support ISO 13400-2).
+
+## SOME/IP backends
+
+### `python-someip`
+
+SOME/IP Events and Fields using the `python-someip` library. Phase 0 scope: Events and Fields only (Methods are Phase 1).
+
+```toml
+[rig.ethernet.eth0]
+someip_backend = "python-someip"
+```
+
+### `virtual`
+
+In-process SOME/IP simulation. Used in the virtual rig.
+
+## Power backends
+
+### `virtual_power`
+
+In-process power simulation. Tracks on/off state in memory. No hardware dependency.
+
+```toml
+[rig.power.ecu_main]
+backend = "virtual_power"
+default = "on"
+```
+
+### `gpio_relay`
+
+Controls power via a GPIO output pin. Typically used with a relay board connected to a GPIO header.
+
+```toml
+[rig.power.ecu_main]
+backend  = "gpio_relay"
+gpio_pin = 18
+default  = "off"
+```
+
+### `bench_psu`
+
+Controls a bench power supply over serial. Supported instruments include Keysight E3631A and compatible.
+
+```toml
+[rig.power.ecu_12v]
+backend = "bench_psu"
+port    = "/dev/ttyUSB0"
+model   = "keysight_e3631a"
+default = "off"
+```
+
+### Custom power backend
+
+```toml
+[rig.power.custom_supply]
+backend = "myorg.bench_hardware.CustomPSUBackend"
+default = "off"
+```
+
+Implement `AbstractPowerBackend`:
+
+```python
+from crucihil.hal.backends.base import AbstractPowerBackend
+
+class CustomPSUBackend(AbstractPowerBackend):
+    async def connect(self) -> None: ...
+    async def disconnect(self) -> None: ...
+    async def power_on(self) -> None: ...
+    async def power_off(self) -> None: ...
+    async def is_on(self) -> bool: ...
+```
+
+## GPIO backends
+
+### `virtual_gpio`
+
+In-process GPIO simulation. Default for all GPIO pins in virtual mode.
+
+```toml
+[rig.gpio]
+ignition_enable = { pin = 22, direction = "out", default = false, backend = "virtual_gpio" }
+```
+
+### `rpi_gpio`
+
+Raspberry Pi GPIO via the `RPi.GPIO` library. For GPIO control boards running Raspberry Pi OS.
+
+```toml
+[rig.gpio]
+ignition_enable = { pin = 22, direction = "out", default = false, backend = "rpi_gpio" }
+```
+
+### Custom GPIO backend
+
+```toml
+[rig.gpio]
+relay_1 = { pin = 1, direction = "out", default = false, backend = "myorg.io_board.IOBoardGPIO" }
+```
+
+Implement `AbstractGPIOBackend`:
+
+```python
+from crucihil.hal.backends.base import AbstractGPIOBackend
+
+class IOBoardGPIO(AbstractGPIOBackend):
+    async def connect(self) -> None: ...
+    async def disconnect(self) -> None: ...
+    async def set(self, pin: int, value: bool) -> None: ...
+    async def get(self, pin: int) -> bool: ...
+```
+
+## Backend selection summary
+
+| Interface | Development / CI | Linux bench | Windows bench | Custom HW |
+|---|---|---|---|---|
+| CAN | `virtual` | `socketcan` | `peak` | module path |
+| DoIP | `virtual` | `python-doip` | `python-doip` | module path |
+| SOME/IP | `python-someip` | `python-someip` | `python-someip` | — |
+| Power | `virtual_power` | `gpio_relay` or `bench_psu` | `bench_psu` | module path |
+| GPIO | `virtual_gpio` | `rpi_gpio` | — | module path |
+
+## See also
+
+- [Rig Configuration Overview](/rig-config/overview)
+- [`crucihil scaffold --adapter`](/cli/scaffold) — generate custom backend stubs

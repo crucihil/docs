@@ -1,0 +1,183 @@
+---
+title: "MCP Server Overview"
+description: "Connect Claude, Copilot, or Cursor to CruciHiL's test infrastructure"
+---
+
+CruciHiL ships a FastMCP server that exposes 14 tools to any MCP-compatible AI client. With the MCP server connected, an AI assistant can query rigs, trigger test runs, analyze failures, and generate new test suites — all from a conversation.
+
+## Starting the MCP server
+
+```bash
+CRUCIHIL_BASE_URL=https://your-server.example.com \
+CRUCIHIL_API_KEY=your-api-key \
+python -m crucihil.mcp.server
+```
+
+For SSE transport (HTTP, suitable for remote connections):
+
+```bash
+CRUCIHIL_BASE_URL=https://your-server.example.com \
+CRUCIHIL_API_KEY=your-api-key \
+CRUCIHIL_MCP_TRANSPORT=sse \
+python -m crucihil.mcp.server
+```
+
+The SSE server binds to `0.0.0.0:8001`.
+
+## Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `CRUCIHIL_BASE_URL` | Yes | HTTP(S) base URL of the CruciHiL control plane |
+| `CRUCIHIL_API_KEY` | Yes (unless OAuth) | API key for global client access |
+| `CRUCIHIL_MCP_TRANSPORT` | No | `stdio` (default) or `sse` |
+| `SECRET_KEY` | OAuth only | HS256 shared secret for JWT verification |
+| `MCP_SERVER_URL` | OAuth only | Public URL of the MCP server |
+
+## Connecting Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+
+```json
+{
+  "mcpServers": {
+    "crucihil": {
+      "command": "python",
+      "args": ["-m", "crucihil.mcp.server"],
+      "env": {
+        "CRUCIHIL_BASE_URL": "https://your-server.example.com",
+        "CRUCIHIL_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop. You should see CruciHiL tools appear in the tools panel.
+
+## Connecting Cursor
+
+In Cursor settings, add an MCP server:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "crucihil": {
+        "url": "http://localhost:8001/sse",
+        "env": {
+          "CRUCIHIL_API_KEY": "your-api-key"
+        }
+      }
+    }
+  }
+}
+```
+
+Start the SSE server first:
+
+```bash
+CRUCIHIL_MCP_TRANSPORT=sse \
+CRUCIHIL_BASE_URL=https://your-server.example.com \
+CRUCIHIL_API_KEY=your-api-key \
+python -m crucihil.mcp.server
+```
+
+## Connecting GitHub Copilot
+
+Use the SSE transport. Add the server URL to your Copilot MCP configuration in VS Code settings.
+
+## Available tools (14 total)
+
+### Rig management
+
+| Tool | Description |
+|---|---|
+| `list_rigs` | List all registered rigs with connection status |
+| `get_rig_config` | Get hardware summary and connectivity for one rig |
+| `register_rig` | Register a new rig, returns a one-time API key |
+
+### Test runs
+
+| Tool | Description |
+|---|---|
+| `list_runs` | List recent runs, optionally filtered by rig |
+| `get_run_summary` | Full summary of one run — pass rate, duration, counts |
+| `run_test_suite` | Create a queued run and push it to the connected agent |
+| `cancel_run` | Cancel a running suite |
+
+### Result inspection
+
+| Tool | Description |
+|---|---|
+| `get_results` | List test results for a run with optional status filter |
+| `get_signal_trace` | Extract signal samples for one signal across a run |
+| `describe_failure` | All failure context in one call — errors, logs, signal traces |
+
+### Signal and suite introspection
+
+| Tool | Description |
+|---|---|
+| `list_signals` | Parse a DBC file and return all signal metadata |
+| `list_tests` | Parse a YAML manifest and return all test metadata |
+
+### AI-assisted
+
+| Tool | Description |
+|---|---|
+| `generate_test_suite` | Scaffold YAML + Python from natural language, with DBC/TOML context |
+| `analyze_component` | Extract signal interface of a C/C++ SWC (requires `[analyze]` extra) |
+
+## Typical AI workflows
+
+### Failure analysis
+
+```
+User: Why did test brake_response fail in the last run on rig bench_01?
+
+Claude:
+  → list_runs(rig_name="bench_01", limit=1)
+  → describe_failure(run_id="...", test_id="brake_response")
+
+Claude: BrakeStatus.Pressure was 0.0 at t=1.203s — the signal never arrived.
+        EngineData.RPM was at 500ms cadence instead of 10ms. Bus load was 94%.
+        The BrakeDemand frame likely missed its arbitration window.
+```
+
+### Onboarding a new rig
+
+```
+User: Register a new rig called bench_02 and tell me how to connect it.
+
+Claude:
+  → register_rig(rig_name="bench_02")
+
+Claude: Registered. API key: chk_xxxxxxxx (save this — shown once).
+        On the bench machine:
+          export CRUCIHIL_API_KEY=chk_xxxxxxxx
+          export CRUCIHIL_BASE_URL=https://your-server.example.com
+          crucihil discover --describe "your hardware"
+          crucihil agent --rig rigs/bench_02.toml
+```
+
+### Generating a test suite
+
+```
+User: Generate a test suite for the engine management SWC. Use the DBC
+      at defs/powertrain.dbc and target the bench_01 rig.
+
+Claude:
+  → generate_test_suite(suite_name="engine_management_validation", ...)
+
+Claude: Created tests/suites/engine_management_validation.yaml and
+        tests/suites/engine_management_validation.py with 5 test functions.
+        Run with:
+          crucihil run --suite tests/suites/engine_management_validation.yaml \
+                       --rig rigs/virtual.toml
+```
+
+## See also
+
+- [MCP Tools — full reference](/mcp/tools)
+- [AI Features Overview](/ai-features/overview)
+- [analyze_component deep dive](/ai-features/analyze)

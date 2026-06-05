@@ -1,0 +1,78 @@
+---
+title: "CLI Overview"
+description: "All crucihil commands at a glance"
+---
+
+CruciHiL ships a single `crucihil` command with subcommands for every workflow.
+
+```bash
+crucihil --help
+```
+
+## Commands
+
+| Command | Description |
+|---|---|
+| [`crucihil run`](/cli/run) | Run a YAML test suite against a rig TOML |
+| [`crucihil analyze`](/cli/analyze) | Extract the signal interface of a C/C++ SWC using tree-sitter + AI |
+| [`crucihil discover`](/cli/discover) | Probe local hardware and generate a rig TOML using AI |
+| [`crucihil init`](/cli/init) | Interactive wizard — create a rig TOML by answering prompts |
+| [`crucihil scaffold`](/cli/scaffold) | Generate a test project, custom backend stub, or runnable example |
+| [`crucihil agent`](/cli/agent) | Start the local agent daemon — connects to cloud via WebSocket |
+| [`crucihil stub`](/cli/run) | Generate missing Python stub functions for a YAML suite |
+| `crucihil deregister` | Remove a rig's saved API key from `~/.crucihil/credentials.toml` |
+| `crucihil version` | Print the installed version |
+
+## Exit codes
+
+All commands follow these exit code conventions:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success — all tests passed (for `run`), or operation completed |
+| `1` | One or more tests failed or errored |
+| `2` | Framework error — bad config, missing files, setup failure |
+
+## Global options
+
+Most commands support:
+
+| Option | Description |
+|---|---|
+| `--verbose` / `-v` | Enable debug logging or per-test status output |
+| `--help` | Show help for a specific command |
+
+## Configuration locations
+
+| File | Purpose |
+|---|---|
+| `rigs/*.toml` | Rig configuration — hardware backends, DBC paths, ECU addresses |
+| `suites/*.yaml` | Test suite manifests — test IDs, metadata, setup/teardown |
+| `tests/*.py` | Python test functions |
+| `~/.crucihil/credentials.toml` | Saved agent API keys (written by `crucihil agent` on first boot) |
+
+## Typical workflow
+
+```bash
+# 1. Install
+pip install 'crucihil[analyze]'
+
+# 2. Create a rig config
+crucihil init
+# or: crucihil discover  (AI-assisted, probes hardware)
+
+# 3. Scaffold a test project
+crucihil scaffold --rig rigs/my_rig.toml
+
+# 4. Fill in test assertions, then run
+crucihil run --suite suites/smoke.yaml --rig rigs/virtual.toml
+
+# 5. Analyze a firmware component
+crucihil analyze \
+  --source swc/brake_controller \
+  --component BrakeController \
+  --rig rigs/bench.toml
+
+# 6. Start the cloud agent
+crucihil agent --rig rigs/bench.toml
+```

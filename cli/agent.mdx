@@ -1,0 +1,162 @@
+---
+title: "crucihil agent"
+description: "Start the local agent daemon — connects the rig to the cloud control plane"
+---
+
+## Synopsis
+
+```bash
+crucihil agent --rig <path> [options]
+```
+
+## Description
+
+`crucihil agent` starts a persistent daemon on the bench machine. The agent:
+
+1. Loads the rig TOML and connects all configured backends
+2. Establishes a WebSocket connection to the cloud control plane
+3. Listens for `run_suite` commands pushed from the cloud
+4. Executes tests and syncs results back to the cloud via the WebSocket
+5. Caches results locally in SQLite when the cloud is unreachable, syncing on reconnect
+
+The agent is a long-running process — it exits only on Ctrl-C or a fatal error. In production, it runs as a `systemd` service.
+
+## Options
+
+<ParamField path="--rig" type="path" required>
+  Path to the rig TOML config. The file must exist. Short form: `-r`.
+</ParamField>
+
+<ParamField path="--cache" type="path" default="~/.crucihil/results.db">
+  Path to the local SQLite result cache. Created if it does not exist. Results are written here first, then synced to the cloud on connection.
+</ParamField>
+
+<ParamField path="--verbose" type="boolean" default="false">
+  Enable debug logging including WebSocket frames and backend I/O. Short form: `-v`.
+</ParamField>
+
+## Cloud connection
+
+The agent connects to the cloud when `[rig.cloud]` is present in the rig TOML:
+
+```toml
+[rig.cloud]
+url                = "https://your-crucihil-server.example.com"
+registration_token = "your-REGISTRATION_TOKEN-here"
+```
+
+On first boot with a `registration_token`, the agent:
+1. Calls `POST /api/v1/rigs/register` with the token
+2. Receives a permanent API key
+3. Saves the key to `~/.crucihil/credentials.toml`
+4. Connects the WebSocket using the new key
+
+On subsequent boots, the agent reads the saved key from credentials — no token needed.
+
+Without a `[rig.cloud]` section, the agent runs in **local-only mode**: tests can be triggered via `crucihil run` but the cloud dashboard and MCP tools will not see this rig.
+
+## WebSocket protocol
+
+The agent maintains a single persistent WebSocket connection to `/ws/agent` on the control plane. The protocol uses JSON messages:
+
+| Direction | Message type | Description |
+|---|---|---|
+| Agent → Cloud | `agent_hello` | Sent on connect — rig name, version, hardware summary |
+| Cloud → Agent | `run_suite` | Trigger a test run — suite path, tags, suite type |
+| Agent → Cloud | `run_started` | Notifies cloud that a run has begun — run ID |
+| Agent → Cloud | `result` | Per-test result — status, duration, errors, signals |
+| Agent → Cloud | `run_finished` | Run complete — final summary |
+| Cloud → Agent | `cancel_run` | Cancel the currently running suite |
+
+The connection uses JWT auth. If the connection drops, the agent reconnects with exponential backoff. Queued runs that arrived while the agent was offline are redelivered by the cloud on reconnect.
+
+## Local result cache
+
+Results are written to the SQLite cache before being synced to the cloud. This ensures no results are lost even if the cloud is unreachable during a test run. The sync happens automatically when the WebSocket reconnects.
+
+The cache path defaults to `~/.crucihil/results.db`. Override with `--cache`.
+
+## Production deployment with systemd
+
+CruciHiL ships a `systemd` template unit for running the agent as a service.
+
+### Install the service
+
+```bash
+# From the crucihil repo
+sudo bash scripts/install-agent.sh
+```
+
+This installs `systemd/crucihil-agent@.service` to `/etc/systemd/system/`.
+
+### Enable for a rig
+
+```bash
+# Enable and start the agent for a specific rig TOML
+sudo systemctl enable --now crucihil-agent@bench_01
+```
+
+The `@bench_01` suffix maps to `rigs/bench_01.toml` — the unit file looks for the TOML at `/opt/crucihil/rigs/<instance_name>.toml`.
+
+### Service unit
+
+```ini
+[Unit]
+Description=CruciHiL Agent — %i
+After=network.target
+
+[Service]
+Type=simple
+User=crucihil
+WorkingDirectory=/opt/crucihil
+ExecStart=/opt/crucihil/.venv/bin/crucihil agent --rig rigs/%i.toml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Check status
+
+```bash
+sudo systemctl status crucihil-agent@bench_01
+sudo journalctl -u crucihil-agent@bench_01 -f
+```
+
+## Environment variables
+
+The agent respects these environment variables for cloud connectivity:
+
+| Variable | Description |
+|---|---|
+| `CRUCIHIL_BASE_URL` | Cloud control plane URL (overrides `[rig.cloud].url`) |
+| `CRUCIHIL_API_KEY` | API key (overrides saved credentials) |
+
+## Example startup output
+
+```
+$ crucihil agent --rig rigs/bench_01.toml
+
+Starting agent — rig: rigs/bench_01.toml
+2026-06-03 10:14:22 INFO  crucihil.agent: rig loaded — bench_01 (orin_nx)
+2026-06-03 10:14:22 INFO  crucihil.agent: connecting backends...
+2026-06-03 10:14:22 INFO  crucihil.hal.backends.peak: opened can0 @ 500 kbit/s
+2026-06-03 10:14:22 INFO  crucihil.hal.backends.socketcan: opened can1 @ 250 kbit/s
+2026-06-03 10:14:22 INFO  crucihil.agent: connecting to cloud...
+2026-06-03 10:14:23 INFO  crucihil.agent: connected — ws://crucihil-server.fly.dev/ws/agent
+2026-06-03 10:14:23 INFO  crucihil.agent: ready (local-only: no)
+```
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Clean shutdown (Ctrl-C) |
+| `2` | Fatal error (bad TOML, backend failure, missing credentials) |
+
+## See also
+
+- [`crucihil discover`](/cli/discover) — generate the rig TOML that the agent uses
+- [MCP Tools — register_rig](/mcp/tools) — register a new rig and get an API key via AI
+- [Rig Configuration — cloud section](/rig-config/overview)

@@ -1,0 +1,106 @@
+---
+title: "AI Features Overview"
+description: "How AI is integrated into CruciHiL — BYOK, supported providers, and three AI-powered workflows"
+---
+
+CruciHiL includes AI in three places:
+
+<CardGroup cols={3}>
+  <Card title="analyze_component" icon="magnifying-glass-chart" href="/ai-features/analyze">
+    Extract the signal interface contract of a C/C++ firmware SWC. Maps AUTOSAR RTE and COM module identifiers to DBC signal names.
+  </Card>
+  <Card title="crucihil discover" icon="radar" href="/cli/discover">
+    Probe hardware and generate a ready-to-use rig TOML. Describes CAN interfaces, bitrates, and ECU topology automatically.
+  </Card>
+  <Card title="generate_test_suite" icon="wand-magic-sparkles" href="/ai-features/generate-tests">
+    Scaffold a YAML manifest and matching Python test stubs from a natural-language description, with signal names auto-extracted from your DBC.
+  </Card>
+</CardGroup>
+
+## BYOK — Bring Your Own Key
+
+CruciHiL does not include or host an AI model. Every AI feature requires an API key from a supported provider. This means:
+
+- You control the model and the cost
+- No data leaves your environment via CruciHiL — queries go directly from your machine to the AI provider
+- You can use whichever model your team already has access to
+
+## Supported providers
+
+| Provider | Environment variable | Default model |
+|---|---|---|
+| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
+| OpenAI (GPT) | `OPENAI_API_KEY` | `gpt-4o` |
+| Google (Gemini) | `GOOGLE_API_KEY` | `gemini-2.0-flash` |
+
+## Provider auto-detection
+
+All AI features check for API keys in this order:
+
+1. `ANTHROPIC_API_KEY`
+2. `OPENAI_API_KEY`
+3. `GOOGLE_API_KEY`
+
+The first key found determines the provider. No configuration needed beyond setting the environment variable.
+
+Override with `--provider` if you want to force a specific provider:
+
+```bash
+crucihil analyze --source swc/brake --component Brake \
+  --rig rigs/bench.toml --provider openai
+```
+
+## Setting up API keys
+
+<CodeGroup>
+```bash Anthropic
+export ANTHROPIC_API_KEY=sk-ant-api03-...
+```
+
+```bash OpenAI
+export OPENAI_API_KEY=sk-proj-...
+```
+
+```bash Google
+export GOOGLE_API_KEY=AIzaSy...
+```
+</CodeGroup>
+
+Add to your shell profile (`~/.bashrc`, `~/.zshrc`) to persist across sessions.
+
+## No AI key? No problem
+
+All AI features degrade gracefully when no key is present:
+
+- **`crucihil analyze`** — returns the extracted identifiers and corpus size without signal matching. You can review identifiers manually.
+- **`crucihil discover`** — falls back to `--no-ai` mode and generates a minimal stub TOML with `# TODO:` markers.
+- **`generate_test_suite`** — writes static placeholder stubs instead of AI-generated assertions.
+
+## MCP + AI = stronger together
+
+The MCP server exposes 14 tools to AI assistants (Claude Desktop, Copilot, Cursor). When an AI assistant has access to both the MCP tools and a real CruciHiL deployment, it can:
+
+- Query which rigs are connected
+- Trigger test runs and poll for results
+- Explain why a specific test failed, with signal trace context
+- Generate new test suites from natural language
+- Map firmware SWC source to DBC signals
+
+This is the primary workflow for AI-assisted firmware testing — the AI orchestrates, CruciHiL executes.
+
+## What the AI sees
+
+CruciHiL sends the AI:
+
+- For `analyze_component`: a filtered list of C/C++ identifiers (up to 500) and the DBC signal corpus (all `MessageName.SignalName` pairs). No source code text.
+- For `discover`: the output of hardware probe commands (`ip link`, `/proc/net/dev`) plus any description you provide.
+- For `generate_test_suite`: signal names from your DBC, hardware capability context from the rig TOML, and your natural-language description.
+
+Source code is never sent to the AI. Only identifiers extracted by tree-sitter are included. This is a deliberate design decision to keep sensitive firmware IP within your environment.
+
+## See also
+
+- [`crucihil analyze` CLI reference](/cli/analyze)
+- [analyze_component deep dive](/ai-features/analyze)
+- [generate_test_suite](/ai-features/generate-tests)
+- [MCP Tools](/mcp/overview)

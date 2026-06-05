@@ -1,0 +1,540 @@
+---
+title: "MCP Tools Reference"
+description: "Complete parameter and return value reference for all 14 CruciHiL MCP tools"
+---
+
+## Rig management
+
+### `list_rigs`
+
+List all registered rigs with connection status.
+
+**Parameters:** None
+
+**Returns:**
+
+```json
+[
+  {
+    "name": "bench_01",
+    "id": "uuid-...",
+    "connected": true,
+    "last_seen_at": 1748948400.0,
+    "version": "0.15.0",
+    "created_at": 1748000000.0,
+    "extra_meta": { "platform": "orin_nx", "can_interfaces": ["can0", "can1"] }
+  }
+]
+```
+
+---
+
+### `get_rig_config`
+
+Get connectivity status and hardware summary for one rig.
+
+**Parameters:**
+
+<ParamField path="rig_name" type="string" required>
+  Exact name of the rig as registered in the control plane.
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "rig_name": "bench_01",
+  "rig_id": "uuid-...",
+  "connected": true,
+  "last_seen_at": 1748948400.0,
+  "version": "0.15.0",
+  "created_at": 1748000000.0,
+  "hardware_summary": {
+    "platform": "orin_nx",
+    "can_interfaces": ["can0", "can1"],
+    "eth_interfaces": ["eth1"]
+  }
+}
+```
+
+---
+
+### `register_rig`
+
+Register a new rig and return its API key.
+
+<Warning>
+The API key is shown ONCE and cannot be retrieved again. Save it immediately.
+</Warning>
+
+**Parameters:**
+
+<ParamField path="rig_name" type="string" required>
+  Unique name for the rig. Letters, numbers, hyphens (e.g. `orin-bench-01`).
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "rig_name": "orin-bench-01",
+  "rig_id": "uuid-...",
+  "role": "admin",
+  "api_key": "chk_xxxxxxxxxxxxxxxx",
+  "next_steps": [
+    "Save the api_key — it will not be shown again.",
+    "On the bench machine, generate the rig TOML:",
+    "  crucihil discover --describe 'your hardware'",
+    "Start the agent:",
+    "  export CRUCIHIL_API_KEY=chk_xxxxxxxxxxxxxxxx",
+    "  export CRUCIHIL_BASE_URL=<your server URL>",
+    "  crucihil agent --rig rigs/orin-bench-01.toml"
+  ]
+}
+```
+
+---
+
+## Test runs
+
+### `list_runs`
+
+List recent test runs, optionally filtered by rig.
+
+**Parameters:**
+
+<ParamField path="rig_name" type="string">
+  Filter to runs from this rig. Pass `null` for all rigs.
+</ParamField>
+
+<ParamField path="limit" type="integer" default="20">
+  Maximum number of runs to return. Max 500.
+</ParamField>
+
+**Returns:**
+
+```json
+[
+  {
+    "run_id": "uuid-...",
+    "suite_name": "engine_validation",
+    "status": "completed",
+    "total": 5,
+    "passed": 4,
+    "failed": 1,
+    "blocked": 0,
+    "errored": 0,
+    "skipped": 0,
+    "started_at": 1748948400.0,
+    "completed_at": 1748948421.3
+  }
+]
+```
+
+---
+
+### `get_run_summary`
+
+Get a full summary of one run including pass rate and duration.
+
+**Parameters:**
+
+<ParamField path="run_id" type="string" required>
+  UUID of the run.
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "run_id": "uuid-...",
+  "rig_id": "uuid-...",
+  "suite_name": "engine_validation",
+  "status": "completed",
+  "started_at": 1748948400.0,
+  "completed_at": 1748948421.3,
+  "duration_s": 21.3,
+  "total": 5,
+  "passed": 4,
+  "failed": 1,
+  "blocked": 0,
+  "errored": 0,
+  "skipped": 0,
+  "pass_rate": 0.8,
+  "triggered_by": "CI"
+}
+```
+
+---
+
+### `run_test_suite`
+
+Create a queued run and push it to the connected agent.
+
+**Parameters:**
+
+<ParamField path="rig_name" type="string" required>
+  Name of the rig to run tests on.
+</ParamField>
+
+<ParamField path="suite_path" type="string" required>
+  Path to the YAML suite manifest as known to the agent (e.g. `tests/suites/engine_validation.yaml`).
+</ParamField>
+
+<ParamField path="tags" type="list[string]">
+  Optional tag filter — only tests matching at least one tag are run.
+</ParamField>
+
+<ParamField path="suite_type" type="string">
+  Optional suite type filter (e.g. `smoke`, `regression`).
+</ParamField>
+
+**Returns:** Run record with `run_id` for polling.
+
+---
+
+### `cancel_run`
+
+Cancel a running test suite.
+
+**Parameters:**
+
+<ParamField path="run_id" type="string" required>
+  UUID of the run to cancel. Only `running` runs can be cancelled.
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "detail": "cancellation requested",
+  "run_id": "uuid-..."
+}
+```
+
+---
+
+## Result inspection
+
+### `get_results`
+
+List test results for a run.
+
+**Parameters:**
+
+<ParamField path="run_id" type="string" required>
+  UUID of the run.
+</ParamField>
+
+<ParamField path="status" type="string">
+  Filter by status: `pass`, `fail`, `blocked`, `error`, or `skip`.
+</ParamField>
+
+**Returns:**
+
+```json
+[
+  {
+    "test_id": "engine_startup",
+    "run_id": "uuid-...",
+    "suite_name": "engine_validation",
+    "status": "pass",
+    "duration": 0.012,
+    "started_at": 1748948400.1,
+    "completed_at": 1748948400.112
+  }
+]
+```
+
+---
+
+### `get_signal_trace`
+
+Extract signal samples for a specific signal across the most recent tests in a run.
+
+Searches up to 5 test results. Returns up to 100 samples per test.
+
+**Parameters:**
+
+<ParamField path="run_id" type="string" required>
+  UUID of the run.
+</ParamField>
+
+<ParamField path="signal_name" type="string" required>
+  Signal name as stored in test results (e.g. `EngineData.RPM`).
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "run_id": "uuid-...",
+  "signal_name": "EngineData.RPM",
+  "found": true,
+  "tests": [
+    {
+      "test_id": "engine_startup",
+      "samples": [
+        {"t": 0.0, "value": 0.0},
+        {"t": 0.1, "value": 450.0},
+        {"t": 0.2, "value": 820.0}
+      ],
+      "total_samples": 3,
+      "truncated": false
+    }
+  ],
+  "note": null
+}
+```
+
+---
+
+### `describe_failure`
+
+Get complete failure context for one test in one run. This is the primary tool for AI failure analysis — it returns everything needed for root-cause analysis in a single call.
+
+Combines: run metadata, error messages, log lines, signal traces (up to 5 signals, 100 samples each).
+
+**Parameters:**
+
+<ParamField path="run_id" type="string" required>
+  UUID of the run.
+</ParamField>
+
+<ParamField path="test_id" type="string" required>
+  Test ID as declared in the YAML manifest.
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "run_id": "uuid-...",
+  "test_id": "brake_response",
+  "suite_name": "engine_validation",
+  "rig_id": "uuid-...",
+  "triggered_by": "CI",
+  "started_at": 1748948410.0,
+  "completed_at": 1748948411.2,
+  "duration_s": 1.2,
+  "run_started_at": 1748948400.0,
+  "status": "fail",
+  "errors": ["Expected BrakeStatus.Pressure >= 75.0, got 0.0"],
+  "error_count": 1,
+  "logs": [],
+  "log_count": 0,
+  "captured_signals": ["BrakeStatus.Pressure", "EngineData.RPM"],
+  "signal_traces": {
+    "BrakeStatus.Pressure": [
+      {"t": 0.0, "value": 0.0},
+      {"t": 0.1, "value": 0.0},
+      {"t": 1.2, "value": 0.0}
+    ]
+  },
+  "signal_note": null,
+  "pass_rate_in_run": 0.6,
+  "run_status": "completed",
+  "total_failures_in_run": 2
+}
+```
+
+---
+
+## Signal and suite introspection
+
+### `list_signals`
+
+Parse a DBC file and return metadata for every signal.
+
+**Parameters:**
+
+<ParamField path="dbc_path" type="string" required>
+  Path to the `.dbc` file, relative to the working directory when the MCP server was started.
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "dbc_path": "defs/vehicle_can.dbc",
+  "message_count": 8,
+  "signal_count": 24,
+  "signals": [
+    {
+      "signal_name": "RPM",
+      "message_name": "EngineData",
+      "message_id": "0x100",
+      "bit_length": 16,
+      "factor": 0.25,
+      "offset": 0.0,
+      "min_val": 0.0,
+      "max_val": 8000.0,
+      "unit": "rpm",
+      "interface": "CAN",
+      "choices": null
+    }
+  ]
+}
+```
+
+---
+
+### `list_tests`
+
+Parse a YAML suite manifest and return metadata for every test.
+
+**Parameters:**
+
+<ParamField path="suite_path" type="string" required>
+  Path to the YAML manifest (e.g. `tests/suites/engine_validation.yaml`).
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "suite_name": "engine_validation",
+  "description": "Engine ECU validation suite",
+  "version": "1.0.0",
+  "suite_path": "tests/suites/engine_validation.yaml",
+  "test_count": 5,
+  "enabled_count": 4,
+  "tests": [
+    {
+      "id": "engine_startup",
+      "name": "ECU reaches idle RPM after ignition",
+      "enabled": true,
+      "skip_reason": null,
+      "priority": "critical",
+      "tags": ["engine", "startup"],
+      "suite_types": ["smoke", "regression"],
+      "hw_variants": ["Virtual_Sim"],
+      "timeout": 5.0,
+      "depends_on": [],
+      "requirements": ["REQ-ENG-001"],
+      "ticket": null
+    }
+  ]
+}
+```
+
+---
+
+## AI-assisted tools
+
+### `generate_test_suite`
+
+Scaffold a YAML manifest and Python stubs, optionally with AI-generated assertions.
+
+**Parameters:**
+
+<ParamField path="suite_name" type="string" required>
+  Snake-case suite name (e.g. `brake_validation`).
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  One-sentence description of what the suite validates.
+</ParamField>
+
+<ParamField path="rig_name" type="string" default='"Virtual_Sim"'>
+  Hardware variant to target.
+</ParamField>
+
+<ParamField path="output_dir" type="string" default='"tests/suites"'>
+  Directory to write both files.
+</ParamField>
+
+<ParamField path="context_items" type="list[string]">
+  Manual context: signal names, fault scenarios, integration flows, sensor feeds.
+</ParamField>
+
+<ParamField path="rig_toml_path" type="string">
+  Rig TOML — auto-extracts ECU names, power rails, GPIO presence.
+</ParamField>
+
+<ParamField path="dbc_path" type="string">
+  DBC file — auto-extracts all `MessageName.SignalName` pairs.
+</ParamField>
+
+<ParamField path="ai_provider" type="string">
+  Provider override: `anthropic`, `openai`, `gemini`.
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "suite_name": "brake_validation",
+  "yaml_path": "tests/suites/brake_validation.yaml",
+  "py_path": "tests/suites/brake_validation.py",
+  "module_path": "tests.suites.brake_validation",
+  "auto_context_count": 26,
+  "context_items_used": [...],
+  "next_steps": [...]
+}
+```
+
+---
+
+### `analyze_component`
+
+Extract the signal interface contract of a C/C++ software component.
+
+Requires `pip install 'crucihil[analyze]'`.
+
+**Parameters:**
+
+<ParamField path="source_path" type="string" required>
+  Path to a `.c`/`.cpp`/`.h` file or a directory of source files.
+</ParamField>
+
+<ParamField path="component_name" type="string" required>
+  Label for this component in the output (e.g. `BrakeController`).
+</ParamField>
+
+<ParamField path="dbc_paths" type="list[string]">
+  One or more DBC file paths. Merged with TOML-discovered DBCs.
+</ParamField>
+
+<ParamField path="rig_toml_path" type="string">
+  Rig TOML — auto-discovers DBCs from `[rig.definitions]`, infers interface type from key name.
+</ParamField>
+
+<ParamField path="dependencies" type="list[string]">
+  Shim header directories or SWC paths to parse alongside the primary source.
+</ParamField>
+
+<ParamField path="ai_provider" type="string">
+  Provider override: `anthropic`, `openai`, `gemini`.
+</ParamField>
+
+**Returns:**
+
+```json
+{
+  "component": "BrakeController",
+  "files_analyzed": 7,
+  "identifiers_extracted": 87,
+  "signal_corpus_size": 26,
+  "inputs": [
+    {
+      "signal": "BrakeDemand.Value",
+      "dbc": "/path/to/chassis.dbc",
+      "interface": "ETH",
+      "matched_identifier": "Rte_Read_BC_BrakeDemandVal",
+      "confidence": 0.95,
+      "review_required": false
+    }
+  ],
+  "outputs": [...],
+  "unmatched_identifiers": [...],
+  "confidence_summary": { "high": 5, "medium": 0, "low": 0 },
+  "review_required_count": 0
+}
+```
+
+## See also
+
+- [MCP Overview — connecting AI clients](/mcp/overview)
+- [AI Features Overview](/ai-features/overview)
+- [analyze_component deep dive](/ai-features/analyze)

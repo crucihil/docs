@@ -1,0 +1,190 @@
+---
+title: "crucihil discover"
+description: "AI-assisted rig setup — probe hardware and generate a rig TOML"
+---
+
+## Synopsis
+
+```bash
+crucihil discover [options]
+```
+
+## Description
+
+`crucihil discover` automates the process of creating a rig TOML configuration. It:
+
+1. **Probes** the local system for CAN interfaces, USB adapters (PEAK, IXXAT), and Ethernet interfaces
+2. **Asks** for a brief hardware description (optional — can be skipped or passed via `--describe`)
+3. **Generates** a ready-to-use rig TOML using an AI model
+4. **Validates** the generated TOML against the Pydantic schema
+5. **Confirms** before writing — you review the TOML and approve the write
+
+This is "Path C" rig setup (alongside manual TOML editing and `crucihil init`). All three paths produce the same TOML format.
+
+## Options
+
+<ParamField path="--output-dir" type="path" default="rigs/">
+  Directory to write the generated rig TOML into. Created if it does not exist. Short form: `-d`.
+</ParamField>
+
+<ParamField path="--provider" type="string">
+  AI provider: `anthropic`, `openai`, or `gemini`. If omitted, auto-detected from environment variables. Short form: `-p`.
+</ParamField>
+
+<ParamField path="--describe" type="string">
+  Hardware description passed directly to the AI. Skips the interactive prompt. Example: `--describe "Nvidia Orin NX, two CAN buses (can0 powertrain 500k, can1 chassis 250k), DoIP on eth1"`.
+</ParamField>
+
+<ParamField path="--no-ai" type="boolean" default="false">
+  Skip AI entirely. Generates a minimal stub TOML from probe results only, with `# TODO:` comments marking values that need manual editing. Useful when no API key is available.
+</ParamField>
+
+<ParamField path="--model" type="string">
+  AI model override. Defaults: `claude-sonnet-4-6` (Anthropic), `gpt-4o` (OpenAI), `gemini-2.0-flash` (Gemini).
+</ParamField>
+
+## API key setup
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # preferred
+# or:
+export OPENAI_API_KEY=sk-...
+export GOOGLE_API_KEY=...
+```
+
+If no key is set in the environment, `crucihil discover` prompts for a provider and API key interactively.
+
+## Example session
+
+```
+$ crucihil discover
+
+╔══════════════════════════════════════════════╗
+║  CruciHiL — AI Rig Discovery                ║
+╚══════════════════════════════════════════════╝
+
+Probing system for hardware...
+
+── Probe results ───────────────────────────────
+CAN interfaces : can0, can1
+USB adapters   : PEAK PCAN-USB (04B4:0F00)
+Ethernet       : eth0 (192.168.1.10/24), eth1 (169.254.0.1/24)
+────────────────────────────────────────────────
+
+Describe your hardware (ECU type, CAN buses, Ethernet, power — or leave blank):
+> Nvidia Orin NX running AUTOSAR. can0 is powertrain at 500k, can1 is chassis at 250k.
+  DoIP target on eth1. PEAK PCAN-USB adapter on can0.
+
+Using Anthropic (from environment)
+Generating configuration...
+
+── Generated rig TOML ──────────────────────────
+[rig]
+name         = "orin_bench"
+platform     = "orin_nx"
+spec_version = "1.0"
+backend      = "hardware"
+
+[rig.can.powertrain]
+interface = "can0"
+bitrate   = 500000
+fd        = false
+backend   = "peak"
+
+[rig.can.chassis]
+interface = "can1"
+bitrate   = 250000
+fd        = false
+backend   = "socketcan"
+
+[rig.ethernet.chassis_eth]
+interface      = "eth1"
+ip             = "169.254.0.1"
+someip_backend = "python-someip"
+doip_backend   = "python-doip"
+
+[rig.power.ecu_main]
+backend = "virtual_power"
+default = "off"
+
+[rig.ecus.orin_ecu]
+name            = "Orin_NX"
+logical_address = 0x0001
+transport       = "doip"
+doip_interface  = "chassis_eth"
+boot_timeout    = 8.0
+
+[rig.definitions]
+can_dbc = "defs/vehicle_can.dbc"  # TODO: set path to your DBC file
+────────────────────────────────────────────────
+
+✓ Valid TOML
+
+Write to rigs/orin_bench.toml? [y/N]: y
+
+✓ Written to rigs/orin_bench.toml
+
+Test it:
+  crucihil run --suite <suite.yaml> --rig rigs/orin_bench.toml
+```
+
+## Hardware probe details
+
+The probe checks:
+
+| What | How |
+|---|---|
+| CAN interfaces | Reads `/proc/net/dev` and filters `can*` entries; also runs `ip link` |
+| USB CAN adapters | Reads `/sys/bus/usb/devices/` and matches known vendor/product IDs (PEAK, IXXAT, Kvaser) |
+| Ethernet interfaces | Reads `ip addr` output, excludes loopback and virtual |
+
+On systems where probe commands are not available (e.g. macOS without SocketCAN), the probe returns empty results. The AI can still generate a TOML from the `--describe` text alone.
+
+## Confirm-on-write security model
+
+`crucihil discover` never writes to disk without explicit confirmation. You always see the full TOML before approving the write. This is by design — AI-generated configs may need manual adjustment, and writing without review could overwrite an existing config.
+
+If you decline the write, the TOML is printed to stdout so you can copy-paste it manually.
+
+## Stub TOML mode (no AI)
+
+Use `--no-ai` when you don't have an API key or prefer to start from a minimal scaffold:
+
+```bash
+crucihil discover --no-ai
+```
+
+The stub TOML includes `# TODO:` comments on every value that needs review:
+
+```toml
+[rig]
+name         = "discovered_rig"
+platform     = "custom"  # TODO: set your platform name
+spec_version = "1.0"
+backend      = "hardware"
+
+[rig.can.can0]
+interface = "can0"
+bitrate   = 500000  # TODO: verify bitrate
+fd        = false
+backend   = "socketcan"
+
+[rig.definitions]
+can_dbc = "defs/vehicle_can.dbc"  # TODO: set path to your DBC
+```
+
+## After discovery
+
+Once the TOML is written, run the interactive validator to check for missing DBC paths or misconfigured ECUs:
+
+```bash
+crucihil run --suite rigs/virtual.toml --rig rigs/orin_bench.toml
+```
+
+If the DBC paths are not set yet, the run will report `BLOCKED` (not `FAIL`) — rig configuration errors are precondition failures, not firmware failures.
+
+## See also
+
+- [`crucihil init`](/cli/init) — interactive wizard (Path B), no AI required
+- [Rig Configuration](/rig-config/overview) — full TOML reference
+- [AI Features Overview](/ai-features/overview) — how BYOK works

@@ -1,0 +1,238 @@
+---
+title: "AI Component Analysis"
+description: "How crucihil analyze maps firmware shim identifiers to DBC signal names"
+---
+
+## The shim-layer problem
+
+In real automotive firmware, signals are never referenced by their DBC name. Between the DBC definition and the C source file sits one or more abstraction layers:
+
+```
+DBC file:           BrakeDemand.Value  (ETH, CAN ID 0x4A2)
+        ↓
+AUTOSAR RTE:        Rte_Read_BC_BrakeDemandVal(&val)
+        ↓
+SWC source:         status = Rte_Read_BC_BrakeDemandVal(&brk_demand);
+```
+
+To write a HiL test for `BrakeController`, you need to know:
+- Which signals does it consume? (`BrakeDemand.Value`, `EngineData.RPM`, `VehicleSpeed.Speed`)
+- Which signals does it produce? (`BrakeStatus.Active`, `BrakeStatus.Pressure`)
+
+Finding this out manually means reading every RTE header, tracing every COM callback, and matching them against a DBC that has hundreds of signals. For a medium-size SWC this takes hours.
+
+`crucihil analyze` does it in under a minute.
+
+## How it works — the full pipeline
+
+```
+Source files  →  tree-sitter  →  identifiers  →  filter  →  AI matching
+DBC files     →  cantools     →  signal corpus ────────────────────────┘
+                                                    ↓
+                                              JSON result
+                                         (inputs + outputs
+                                          with confidence)
+```
+
+### Stage 1 — Identifier extraction (tree-sitter)
+
+tree-sitter parses every `.c`, `.cpp`, `.h`, `.hpp`, `.cc`, `.cxx` file under `--source` and any `--dep` paths. It collects every node of type `identifier`, `field_identifier`, and `type_identifier` from the AST — a broad sweep that captures function calls, variable names, macro names, and type names.
+
+The result is a set of raw strings like:
+
+```
+Rte_Read_BC_BrakeDemandVal
+COM_SIG_ENGINE_RPM
+BrakeControllerInit
+uint32_t
+i
+status
+```
+
+### Stage 2 — Noise filter
+
+A static blocklist removes:
+- C/C++ keywords (`int`, `static`, `typedef`, ...)
+- AUTOSAR primitive types (`uint8_t`, `Std_ReturnType`, `E_OK`, ...)
+- Common local variable names (`value`, `result`, `status`, `i`, ...)
+- Any identifier shorter than 4 characters
+- Any identifier starting with `__`
+
+The remaining identifiers are sorted longest-first (longer names are more likely to be meaningful shim identifiers) and capped at 500. This keeps the AI prompt within context budget.
+
+### Stage 3 — Signal corpus
+
+DBC files are parsed with cantools. Every `MessageName.SignalName` pair becomes a corpus entry:
+
+```
+BrakeDemand.Value      [ETH, defs/chassis.dbc]
+EngineData.RPM         [CAN, defs/powertrain.dbc]
+BrakeStatus.Active     [CAN, defs/powertrain.dbc]
+VehicleSpeed.Speed     [CAN, defs/powertrain.dbc]
+```
+
+Interface type is inferred from the TOML key name: `can_dbc → CAN`, `eth_dbc → ETH`. Explicit `--dbc` paths default to `unknown`.
+
+### Stage 4 — AI matching
+
+The AI receives:
+- The filtered identifier list (up to 500 entries)
+- The full signal corpus with interface labels
+- A system prompt that explains the direction rules (Read/Receive/Get → INPUT, Write/Send/Set → OUTPUT)
+
+The AI returns JSON:
+
+```json
+{
+  "inputs": [
+    {
+      "signal": "BrakeDemand.Value",
+      "interface": "ETH",
+      "matched_identifier": "Rte_Read_BC_BrakeDemandVal",
+      "confidence": 0.95
+    }
+  ],
+  "outputs": [...],
+  "unmatched_identifiers": [...]
+}
+```
+
+The framework enriches each match with `review_required: true` when `confidence < 0.85`, and deduplicates by signal — keeping only the highest-confidence match when a signal is matched via multiple shim paths.
+
+## Confidence score system
+
+| Range | Label | What it means |
+|---|---|---|
+| 0.90 – 1.00 | High | Unmistakable match — e.g., `Rte_Read_EC_EngineRPM → EngineData.RPM` |
+| 0.70 – 0.89 | High | Strong semantic match with minor naming variation |
+| 0.85+ | `review_required: false` | Safe to use in tests without manual verification |
+| 0.60 – 0.84 | Medium | Plausible but ambiguous — verify before using |
+| Below 0.60 | Omitted | Not included in output |
+
+<Warning>
+Medium-confidence matches (`review_required: true`) should be verified against the actual header before being used in test assertions. A false match here will cause a test to assert the wrong signal.
+</Warning>
+
+## The direction inference rules
+
+The AI determines input vs. output from the shim identifier's verb:
+
+| Verb pattern | Direction | Example |
+|---|---|---|
+| `Rte_Read_*`, `Com_Receive*`, `get_*`, `*_read` | INPUT | `Rte_Read_BC_BrakeDemandVal` |
+| `Rte_Write_*`, `Com_Send*`, `set_*`, `*_write` | OUTPUT | `Rte_Write_BC_BrakeActive` |
+| Enum ID like `COM_SIG_*` | INPUT (default) | `COM_SIG_ENGINE_RPM` |
+
+Ambiguous identifiers are classified as INPUT when context is insufficient.
+
+## Using --dep for better coverage
+
+Many AUTOSAR SWCs have this pattern:
+
+```c
+// brake_controller.c
+Std_ReturnType ret = Rte_Read_BC_BrakeDemandVal(&demand);
+```
+
+The function `Rte_Read_BC_BrakeDemandVal` is declared in `rte/Rte_BrakeController.h`, not in the SWC source itself. Without `--dep rte/Rte_BrakeController.h`, tree-sitter still finds the call — but the additional type annotations in the header make the semantic match stronger.
+
+<Tip>
+Pass only the shim headers for the specific SWC you are analyzing. Avoid passing the entire `rte/` directory — it adds identifiers from other SWCs and introduces noise.
+</Tip>
+
+### Good dependency pattern
+
+```bash
+# Right: only the BrakeController's shim headers
+crucihil analyze \
+  --source swc/brake_controller \
+  --component BrakeController \
+  --rig rigs/bench.toml \
+  --dep rte/Rte_BrakeController.h \
+  --dep com/Com_BrakeController_Cfg.h
+```
+
+### Avoid
+
+```bash
+# Wrong: entire RTE directory floods the AI with other SWCs' identifiers
+crucihil analyze \
+  --source swc/brake_controller \
+  --component BrakeController \
+  --rig rigs/bench.toml \
+  --dep rte/
+```
+
+## Multi-interface support
+
+CruciHiL supports DBC-encoded definitions for any interface type. A single `crucihil analyze` call can match signals across multiple buses:
+
+```bash
+crucihil analyze \
+  --source swc/chassis_controller \
+  --component ChassisController \
+  --dbc defs/powertrain_can.dbc \
+  --dbc defs/chassis_eth.dbc
+```
+
+Interface types are inferred from TOML key names:
+- `can_dbc = "..."` → `CAN`
+- `eth_dbc = "..."` → `ETH`
+
+Or passed directly with `--dbc`, defaulting to `unknown` unless the TOML key is used.
+
+## What is NOT sent to the AI
+
+CruciHiL never sends raw source code to the AI — only the extracted identifier list and the DBC signal corpus. This means:
+
+- Firmware IP (algorithms, constants, proprietary logic) stays on your machine
+- The AI never sees function bodies, comments, or string literals
+- Only a filtered list of identifier names (up to 500) is transmitted
+
+## Integration with generate_test_suite
+
+The output of `crucihil analyze` feeds directly into test generation:
+
+```python
+# In Claude/Copilot with MCP tools:
+result = analyze_component(
+    source_path="swc/brake_controller",
+    component_name="BrakeController",
+    rig_toml_path="rigs/bench.toml",
+)
+
+# Use high-confidence matches as context for test generation
+signals = [m["signal"] for m in result["inputs"] + result["outputs"]
+           if not m["review_required"]]
+
+generate_test_suite(
+    suite_name="brake_validation",
+    description="Validate BrakeController signal interface",
+    rig_toml_path="rigs/bench.toml",
+    context_items=signals,
+)
+```
+
+## Tips for best results
+
+<Tip>
+**Analyze one component at a time.** The identifier cap (500) is calibrated for a single SWC. Pointing `--source` at an entire project directory will dilute the identifier space and reduce precision.
+</Tip>
+
+<Tip>
+**Use the rig TOML for DBC discovery.** Specifying DBC files via `[rig.definitions]` in the TOML gives the AI interface type context (`CAN` vs `ETH`) that improves match quality.
+</Tip>
+
+<Tip>
+**Trust high-confidence matches, verify medium ones.** Matches with `confidence >= 0.85` are almost always correct. Spend review time on the 0.60–0.84 range.
+</Tip>
+
+<Tip>
+**Run with `--output json` and filter in CI.** `jq '.inputs[] | select(.review_required == false)'` gives you only the high-confidence matches to feed into test generation.
+</Tip>
+
+## See also
+
+- [`crucihil analyze` CLI reference](/cli/analyze)
+- [generate_test_suite](/ai-features/generate-tests)
+- [MCP analyze_component tool](/mcp/tools)

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "CruciHiL",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#F97316",
+    "light": "#FDBA74",
+    "dark": "#EA580C",
+    "anchors": {
+      "from": "#F97316",
+      "to": "#EA580C"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/crucihil"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "https://crucihil.io"
+  },
+  "tabs": [
+    {
+      "name": "CLI Reference",
+      "url": "cli"
+    },
+    {
+      "name": "AI Features",
+      "url": "ai-features"
+    },
+    {
+      "name": "Rig Configuration",
+      "url": "rig-config"
+    },
+    {
+      "name": "Test Authoring",
+      "url": "test-authoring"
+    },
+    {
+      "name": "MCP Tools",
+      "url": "mcp"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/crucihil"
+    },
+    {
+      "name": "crucihil.io",
+      "icon": "globe",
+      "url": "https://crucihil.io"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": [
+        "introduction",
+        "quickstart",
+        "installation"
+      ]
+    },
+    {
+      "group": "CLI Reference",
+      "pages": [
+        "cli/overview",
+        "cli/run",
+        "cli/analyze",
+        "cli/discover",
+        "cli/init",
+        "cli/agent",
+        "cli/scaffold"
+      ]
+    },
+    {
+      "group": "AI Features",
+      "pages": [
+        "ai-features/overview",
+        "ai-features/analyze",
+        "ai-features/generate-tests"
+      ]
+    },
+    {
+      "group": "Rig Configuration",
+      "pages": [
+        "rig-config/overview",
+        "rig-config/backends"
+      ]
+    },
+    {
+      "group": "Test Authoring",
+      "pages": [
+        "test-authoring/yaml-manifest",
+        "test-authoring/python-api"
+      ]
+    },
+    {
+      "group": "MCP Tools",
+      "pages": [
+        "mcp/overview",
+        "mcp/tools"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/crucihil",
+    "website": "https://crucihil.io"
+  }
+}

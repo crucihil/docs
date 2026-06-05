@@ -1,0 +1,176 @@
+---
+title: "crucihil run"
+description: "Run a CruciHiL test suite against a rig"
+---
+
+## Synopsis
+
+```bash
+crucihil run --suite <path> --rig <path> [options]
+```
+
+## Description
+
+`crucihil run` loads a YAML suite manifest and a rig TOML, connects all configured backends, and executes the test functions. Results are printed to stdout. Optionally writes JUnit XML or an HTML report.
+
+The rig TOML determines which backends are used — switching from virtual to real hardware is a one-line change in the TOML. The test code and suite YAML are identical in both cases.
+
+## Options
+
+<ParamField path="--suite" type="path" required>
+  Path to the YAML suite manifest (`.yaml`). The suite file must exist. Short form: `-s`.
+</ParamField>
+
+<ParamField path="--rig" type="path" required>
+  Path to the rig TOML config (`.toml`). The file must exist. Short form: `-r`.
+</ParamField>
+
+<ParamField path="--output" type="path">
+  Write JUnit XML results to this path. Creates or overwrites the file. Short form: `-o`.
+</ParamField>
+
+<ParamField path="--html" type="path">
+  Write a self-contained HTML test report to this path. The HTML file has no external dependencies and can be opened in any browser.
+</ParamField>
+
+<ParamField path="--tags" type="string">
+  Comma-separated list of tags. Only tests that match at least one tag are executed. Example: `--tags smoke,engine`.
+</ParamField>
+
+<ParamField path="--suite-type" type="string">
+  Comma-separated suite types. Only tests that match at least one type are executed. Common values: `smoke`, `regression`. Example: `--suite-type smoke`.
+</ParamField>
+
+<ParamField path="--verbose" type="boolean" default="false">
+  Show per-test status lines during the run. Also enables debug logging from backends. Short form: `-v`.
+</ParamField>
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | All executed tests passed |
+| `1` | One or more tests failed or errored |
+| `2` | Framework error (bad config, missing files, backend setup failure) |
+
+<Info>
+`blocked` tests (where a rig precondition was not met) do not count as failures and do not affect the exit code. Only `fail` and `error` statuses trigger exit code 1.
+</Info>
+
+## Output format
+
+```
+Suite  : engine_validation v1.0.0  (5 tests)
+Rig    : rigs/virtual.toml
+
+  ✓ [PASS   ] engine_startup      (0.012s)
+  ✓ [PASS   ] can_heartbeat       (0.008s)
+  ✗ [FAIL   ] brake_response      (1.203s)
+             Expected BrakeStatus.Pressure >= 75.0, got 0.0
+  ⊘ [BLOCKED] fault_injection     (0.001s)
+             Rig precondition: power_rail 'ecu_main' not available in virtual mode
+  – [SKIP   ] vehicle_speed       (0.000s)
+
+4 run · 2 passed · 1 failed · 1 blocked · 0 errored  (1.224s total)
+
+JUnit  : results/run.xml
+HTML   : results/report.html
+```
+
+### Status icons
+
+| Icon | Status | Meaning |
+|---|---|---|
+| `✓` | `PASS` | Test assertion passed |
+| `✗` | `FAIL` | Test assertion failed — firmware is not behaving as expected |
+| `⊘` | `BLOCKED` | Rig precondition not met — does not count against pass rate |
+| `!` | `ERROR` | Unexpected exception in test code |
+| `–` | `SKIP` | Test was disabled (`enabled: false` in YAML) |
+
+## JUnit XML output
+
+When `--output` is provided, CruciHiL writes a JUnit-compatible XML file. This integrates with:
+
+- GitHub Actions (`actions/upload-artifact` + test summary)
+- GitLab CI (`junit` artifact report type)
+- Jenkins (JUnit Plugin)
+- Any CI system that understands JUnit XML
+
+Example GitHub Actions step:
+
+```yaml
+- name: Run HiL tests
+  run: |
+    crucihil run \
+      --suite suites/regression.yaml \
+      --rig rigs/virtual.toml \
+      --output results/junit.xml
+
+- name: Publish test results
+  uses: mikepenz/action-junit-report@v4
+  if: always()
+  with:
+    report_paths: results/junit.xml
+```
+
+## HTML report
+
+The HTML report is a single self-contained file. It includes:
+
+- Pass/fail summary with counts and duration
+- Per-test expandable rows with error messages
+- Signal trace data (if recorded)
+- Rig config metadata
+
+## Filtering tests
+
+Run only smoke tests:
+
+```bash
+crucihil run --suite suites/regression.yaml --rig rigs/virtual.toml \
+  --suite-type smoke
+```
+
+Run only tests tagged `engine`:
+
+```bash
+crucihil run --suite suites/regression.yaml --rig rigs/virtual.toml \
+  --tags engine
+```
+
+Combine filters (must match at least one tag AND at least one suite type):
+
+```bash
+crucihil run --suite suites/regression.yaml --rig rigs/virtual.toml \
+  --tags engine,startup --suite-type smoke
+```
+
+## Examples
+
+### Run against virtual backend (no hardware)
+
+```bash
+crucihil run --suite suites/smoke.yaml --rig rigs/virtual.toml
+```
+
+### Run with HTML and JUnit output
+
+```bash
+crucihil run \
+  --suite suites/regression.yaml \
+  --rig rigs/bench.toml \
+  --output results/run.xml \
+  --html results/report.html
+```
+
+### Verbose mode (see per-backend debug logs)
+
+```bash
+crucihil run --suite suites/smoke.yaml --rig rigs/virtual.toml --verbose
+```
+
+## See also
+
+- [YAML Manifest Reference](/test-authoring/yaml-manifest) — suite and test schema
+- [Python API Reference](/test-authoring/python-api) — rig.can, rig.sim, rig.fault
+- [Rig Configuration](/rig-config/overview) — backends and TOML structure

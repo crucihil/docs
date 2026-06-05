@@ -1,0 +1,260 @@
+---
+title: "crucihil analyze"
+description: "Extract the signal interface contract of a C/C++ firmware component"
+---
+
+## Synopsis
+
+```bash
+crucihil analyze --source <path> --component <name> --rig <toml> [options]
+```
+
+## Requirements
+
+`crucihil analyze` requires the `analyze` optional extra:
+
+```bash
+pip install 'crucihil[analyze]'
+```
+
+This installs `tree-sitter`, `tree-sitter-c`, and `tree-sitter-cpp`.
+
+## What it does
+
+Real firmware components never reference DBC signal names directly. Instead, they go through shim layers:
+
+```
+AUTOSAR RTE:  Rte_Read_BC_BrakeDemandVal(...)
+COM module:   Com_ReceiveSignal(COM_SIG_ENGINE_RPM, &val)
+Custom HAL:   hal_can_read_engine_speed()
+```
+
+`crucihil analyze` bridges this gap using a three-step pipeline:
+
+1. **Parse** — tree-sitter walks every `.c`, `.cpp`, `.h`, `.hpp` file in the source directory and collects all identifiers (functions, variables, macros, type names).
+2. **Corpus** — DBC files from `[rig.definitions]` in the rig TOML (or from `--dbc`) are parsed with cantools. Every `MessageName.SignalName` pair becomes a corpus entry, tagged with its interface type (`CAN`, `ETH`, etc.).
+3. **Match** — An AI (Claude, GPT-4o, or Gemini) receives the filtered identifier list and the full signal corpus. It returns JSON: which identifiers map to which signals, whether each is an input or output, and a confidence score.
+
+The result is the signal interface contract of the component — which signals it reads (inputs) and writes (outputs) — without needing to manually trace every RTE wrapper.
+
+## Options
+
+<ParamField path="--source" type="path" required>
+  Path to the SWC source directory or a single `.c`/`.cpp`/`.h` file. All `.c`, `.cpp`, `.cc`, `.cxx`, `.h`, `.hpp` files under this path are included. Short form: `-s`.
+</ParamField>
+
+<ParamField path="--component" type="string" required>
+  Label for this component in the output (e.g. `BrakeController`, `EngineManagement`). Short form: `-c`.
+</ParamField>
+
+<ParamField path="--rig" type="path">
+  Path to a rig TOML config. CruciHiL reads `[rig.definitions]` and auto-discovers DBC files. Interface type is inferred from the key name: `can_dbc → CAN`, `eth_dbc → ETH`. Can be combined with `--dbc`.
+</ParamField>
+
+<ParamField path="--dbc" type="path">
+  Path to a DBC file. Repeatable — pass multiple DBC files for multi-bus components. Interface type defaults to `unknown` unless inferred from key name in TOML. Example: `--dbc defs/powertrain.dbc --dbc defs/chassis.dbc`.
+</ParamField>
+
+<ParamField path="--dep" type="path">
+  Path to a shim header directory or another SWC path to parse alongside the primary source. Repeatable. Use this to include RTE headers, COM module headers, or any other files where signal-related identifiers are defined. See [Dependency resolution](#dependency-resolution) below.
+</ParamField>
+
+<ParamField path="--provider" type="string">
+  AI provider override. One of `anthropic`, `openai`, `gemini`. If omitted, auto-detected from environment variables in this order: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`. Short form: `-p`.
+</ParamField>
+
+<ParamField path="--output" type="string" default="pretty">
+  Output format. `pretty` prints a human-readable summary. `json` prints the raw result as JSON.
+</ParamField>
+
+## API key setup
+
+Set one of these environment variables before running:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # uses Claude
+export OPENAI_API_KEY=sk-...          # uses GPT-4o
+export GOOGLE_API_KEY=...             # uses Gemini
+```
+
+The provider is auto-detected from whichever key is present. If multiple keys are set, Anthropic takes priority, then OpenAI, then Google.
+
+## Example
+
+```bash
+crucihil analyze \
+  --source swc/brake_controller \
+  --component BrakeController \
+  --rig rigs/bench.toml \
+  --dep rte/ \
+  --dep com/ \
+  --output pretty
+```
+
+### Example output
+
+```
+AI provider : Anthropic (claude-sonnet-4-6)
+Key status  : found (ANTHROPIC_API_KEY)
+
+  Component : BrakeController
+  Files     : 7
+  Corpus    : 26 signals
+  Extracted : 87 identifiers
+
+── Inputs (signals consumed by this SWC) ───────────────────
+  BrakeDemand.Value      [ETH]  conf=0.95  via Rte_Read_BC_BrakeDemandVal
+  EngineData.RPM         [CAN]  conf=0.90  via COM_SIG_ENGINE_RPM
+  VehicleSpeed.Speed     [CAN]  conf=0.87  via Rte_Read_VS_SpeedVal
+
+── Outputs (signals produced by this SWC) ──────────────────
+  BrakeStatus.Active     [CAN]  conf=0.95  via Rte_Write_BC_BrakeActive
+  BrakeStatus.Pressure   [CAN]  conf=0.95  via Rte_Write_BC_BrakePressure
+
+  5 signal(s) matched  ·  5 high confidence · 0 medium · 0 low
+```
+
+### JSON output
+
+```bash
+crucihil analyze \
+  --source swc/brake_controller \
+  --component BrakeController \
+  --rig rigs/bench.toml \
+  --output json
+```
+
+```json
+{
+  "component": "BrakeController",
+  "files_analyzed": 7,
+  "identifiers_extracted": 87,
+  "signal_corpus_size": 26,
+  "inputs": [
+    {
+      "signal": "BrakeDemand.Value",
+      "dbc": "/rigs/../defs/chassis.dbc",
+      "interface": "ETH",
+      "matched_identifier": "Rte_Read_BC_BrakeDemandVal",
+      "confidence": 0.95,
+      "review_required": false
+    }
+  ],
+  "outputs": [
+    {
+      "signal": "BrakeStatus.Active",
+      "dbc": "/rigs/../defs/powertrain.dbc",
+      "interface": "CAN",
+      "matched_identifier": "Rte_Write_BC_BrakeActive",
+      "confidence": 0.95,
+      "review_required": false
+    }
+  ],
+  "unmatched_identifiers": ["BrakeControllerInit", "BrakePID_calc"],
+  "confidence_summary": { "high": 5, "medium": 0, "low": 0 },
+  "review_required_count": 0
+}
+```
+
+## Confidence scores
+
+Every signal match comes with a confidence score:
+
+| Range | Label | Meaning | `review_required` |
+|---|---|---|---|
+| 0.85 – 1.00 | High | Clear match — use in tests | `false` |
+| 0.60 – 0.84 | Medium | Plausible match — verify before using | `true` |
+| Below 0.60 | Omitted | Not included in output |  |
+
+<Tip>
+Focus review on matches where `review_required: true`. These are signals where the AI found a plausible but not obvious connection between the shim identifier and the DBC signal name.
+</Tip>
+
+## Dependency resolution
+
+The `--dep` option is the most powerful knob for improving result quality.
+
+In many AUTOSAR projects, the SWC source file contains calls like `Rte_Read_BC_BrakeDemandVal(...)` but the actual identifier definition lives in `rte/Rte_BrakeController.h`. Without that header, the AI sees the call but not the type information that makes the semantic match clearer.
+
+**Pass only the shim headers for the SWC you are analyzing:**
+
+```bash
+# Good — only the shim headers for BrakeController
+crucihil analyze \
+  --source swc/brake_controller \
+  --component BrakeController \
+  --rig rigs/bench.toml \
+  --dep rte/Rte_BrakeController.h \
+  --dep com/Com_Signals_BrakeController.h
+
+# Avoid — passing the entire RTE directory adds noise from other SWCs
+crucihil analyze \
+  --source swc/brake_controller \
+  --component BrakeController \
+  --rig rigs/bench.toml \
+  --dep rte/                        # too broad
+```
+
+<Warning>
+Passing the entire RTE directory as `--dep` includes identifiers from every SWC. This increases identifier count and can confuse the AI into making cross-component matches. Pass only headers that belong to the component you are analyzing.
+</Warning>
+
+## Without an AI key
+
+If no API key is found, `crucihil analyze` returns the extracted identifiers and corpus size for manual inspection:
+
+```
+No AI key found — set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY.
+
+  Component : BrakeController
+  Files     : 7
+  Corpus    : 26 signals
+  Extracted : 87 identifiers (signal matching skipped)
+```
+
+The JSON output includes `identifiers_extracted` (list) and `signal_corpus_size` so you can perform the matching manually or with a separate tool.
+
+## Tips for best results
+
+<Tip>
+**Use the rig TOML instead of bare `--dbc` flags.** The rig TOML's `[rig.definitions]` section specifies interface type per key (`can_dbc → CAN`, `eth_dbc → ETH`). This gives the AI better context about which bus each signal lives on.
+</Tip>
+
+<Tip>
+**Analyze one SWC at a time.** The tool is calibrated for a single component's identifier space. Passing multiple SWCs in one `--source` call degrades precision because the AI context window fills with unrelated identifiers.
+</Tip>
+
+<Tip>
+**Use `--output json` for CI integration.** The JSON output is stable and machine-readable. Pipe it to `jq` to extract only high-confidence matches: `jq '.inputs[] | select(.review_required == false)'`.
+</Tip>
+
+<Tip>
+**Review medium-confidence matches against the actual header.** A medium confidence (0.60–0.84) match is the AI saying "these names are semantically related but I'm not certain." Ten minutes with the relevant `.h` file usually confirms or refutes each one.
+</Tip>
+
+## How to use the output
+
+The JSON output from `crucihil analyze` can be fed directly into [generate_test_suite](/mcp/tools) as `context_items`:
+
+```python
+# Using the MCP tool from Claude/Copilot
+analyze_component(
+    source_path="swc/brake_controller",
+    component_name="BrakeController",
+    rig_toml_path="rigs/bench.toml",
+    dependencies=["rte/"],
+)
+# Then pass the resulting inputs/outputs to generate_test_suite
+generate_test_suite(
+    suite_name="brake_validation",
+    description="Validate BrakeController signal interface",
+    rig_toml_path="rigs/bench.toml",
+    context_items=["BrakeDemand.Value", "BrakeStatus.Pressure", ...],
+)
+```
+
+## See also
+
+- [AI Features — analyze deep dive](/ai-features/analyze)
+- [MCP analyze_component tool](/mcp/tools)
+- [Rig TOML — definitions section](/rig-config/overview)

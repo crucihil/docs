@@ -1,0 +1,316 @@
+---
+title: "YAML Manifest Reference"
+description: "Complete schema reference for the CruciHiL v2 YAML suite manifest"
+---
+
+A CruciHiL test suite is defined by a YAML manifest file. One YAML file = one test suite. The manifest declares metadata, hardware requirements, DBC paths, default values, and per-test configurations. Test logic lives in Python functions referenced from the manifest.
+
+## Full example
+
+```yaml
+# tests/suites/engine_validation.yaml
+suite:
+  name: engine_validation
+  version: "1.0.0"
+  description: "Engine ECU validation — smoke and regression suite"
+
+hardware:
+  required:
+    - can0
+  optional:
+    - eth0
+
+definitions:
+  can_dbc: "defs/vehicle_can.dbc"
+
+defaults:
+  hw_variants: [Virtual_Sim]
+  suite_types: [smoke, regression]
+  timeout: 5.0
+  enabled: true
+
+tests:
+
+  - id: engine_startup
+    name: "ECU reaches idle RPM after ignition"
+    suite_types: [smoke, regression]
+    priority: critical
+    tags: [engine, startup]
+    requirements: [REQ-ENG-001]
+    ticket: ENG-412
+    setup:
+      - sim.set:   { signal: "EngineData.RPM", value: 1500.0 }
+      - sim.start: EngineData
+    teardown:
+      - sim.stop: EngineData
+    module: tests.suites.engine_functions
+    function: test_engine_startup
+    params:
+      expected_rpm: 800.0
+      startup_timeout: 2.0
+
+  - id: vehicle_speed_disabled
+    name: "Vehicle speed range check"
+    enabled: false
+    skip_reason: "Blocked on fw-412 — signal not wired in virtual ECU"
+    module: tests.suites.engine_functions
+    function: test_vehicle_speed_range
+
+  - id: depends_on_startup
+    name: "Speed check after engine startup"
+    depends_on: [engine_startup]
+    setup:
+      - sim.set:   { signal: "VehicleSpeed.Speed", value: 80.0 }
+      - sim.start: VehicleSpeed
+    teardown:
+      - sim.stop: VehicleSpeed
+    module: tests.suites.engine_functions
+    function: test_vehicle_speed_range
+    params:
+      max_speed: 327.0
+      timeout: 1.0
+```
+
+## `suite` — suite metadata
+
+<ParamField path="suite.name" type="string" required>
+  Suite identifier (snake_case). Used in reports and database storage.
+</ParamField>
+
+<ParamField path="suite.version" type="string" default='"1.0.0"'>
+  Suite version string. Included in JUnit XML output.
+</ParamField>
+
+<ParamField path="suite.description" type="string">
+  Human-readable description of what the suite validates.
+</ParamField>
+
+## `hardware` — hardware requirements
+
+Checked at runner startup. Missing required hardware marks the entire run as blocked — not failed.
+
+<ParamField path="hardware.required" type="list[string]">
+  Hardware capabilities that must be present (e.g. `can0`, `eth0`). These must match interface keys defined in `[rig.can.*]` and `[rig.ethernet.*]` in the rig TOML.
+</ParamField>
+
+<ParamField path="hardware.optional" type="list[string]">
+  Hardware that is used if present but not required for the run to proceed.
+</ParamField>
+
+## `definitions` — DBC files
+
+```yaml
+definitions:
+  can_dbc: "defs/vehicle_can.dbc"
+  eth_dbc: "defs/chassis.dbc"
+```
+
+<ParamField path="definitions.can_dbc" type="string">
+  Path to the CAN DBC file. Relative to the project root (the directory two levels up from the suite YAML, or the current working directory).
+</ParamField>
+
+<ParamField path="definitions.eth_dbc" type="string">
+  Path to the Ethernet DBC/descriptor file.
+</ParamField>
+
+## `defaults` — suite-level defaults
+
+Values declared here are inherited by every test unless the test overrides them.
+
+<ParamField path="defaults.hw_variants" type="list[string]" default="[]">
+  Which hardware variants this suite targets. Tests not matching the active rig's variant are skipped. Use the rig `name` field from the TOML as the variant string.
+</ParamField>
+
+<ParamField path="defaults.suite_types" type="list[string]" default='["regression"]'>
+  Default suite types (e.g. `smoke`, `regression`). Used by `crucihil run --suite-type` to filter tests.
+</ParamField>
+
+<ParamField path="defaults.timeout" type="float" default="30.0">
+  Default test timeout in seconds. Individual tests override this.
+</ParamField>
+
+<ParamField path="defaults.retries" type="integer" default="0">
+  Default number of retries on test failure.
+</ParamField>
+
+<ParamField path="defaults.setup_timeout" type="float" default="15.0">
+  Default timeout for setup and teardown steps.
+</ParamField>
+
+<ParamField path="defaults.enabled" type="boolean" default="true">
+  Whether tests are enabled by default.
+</ParamField>
+
+## `tests` — per-test configuration
+
+Each entry in `tests:` defines one test.
+
+### Identity and display
+
+<ParamField path="id" type="string" required>
+  Unique test identifier within the suite (snake_case). Used in `depends_on`, result records, and `describe_failure` MCP tool.
+</ParamField>
+
+<ParamField path="name" type="string">
+  Human-readable test name. Shown in reports and dashboard.
+</ParamField>
+
+<ParamField path="description" type="string">
+  Longer description of what the test verifies.
+</ParamField>
+
+### Targeting
+
+<ParamField path="enabled" type="boolean" default="true">
+  Set to `false` to skip the test. Include `skip_reason` to explain why.
+</ParamField>
+
+<ParamField path="skip_reason" type="string">
+  Human-readable reason for disabling the test. Shown in reports.
+</ParamField>
+
+<ParamField path="hw_variants" type="list[string]">
+  Hardware variants this test applies to. Inherits from `defaults.hw_variants` if not set. A test is only run when the active rig's name matches one of these variants.
+</ParamField>
+
+<ParamField path="suite_types" type="list[string]">
+  Suite types this test belongs to. Inherits from `defaults.suite_types`. Used with `crucihil run --suite-type smoke` to run only smoke tests.
+</ParamField>
+
+<ParamField path="priority" type="string" default='"medium"'>
+  Test priority. One of: `critical`, `high`, `medium`, `low`. Shown in reports; does not affect execution order (use `depends_on` for ordering).
+</ParamField>
+
+### Scheduling
+
+<ParamField path="timeout" type="float" default="30.0">
+  Test timeout in seconds. If the test function does not complete within this time, it is marked `error`.
+</ParamField>
+
+<ParamField path="depends_on" type="list[string]">
+  List of test IDs that must pass before this test runs. If any dependency fails or is blocked, this test is skipped.
+</ParamField>
+
+<ParamField path="repeat" type="integer" default="1">
+  Number of times to run this test. Useful for flakiness detection.
+</ParamField>
+
+### Traceability
+
+<ParamField path="tags" type="list[string]">
+  Free-form tags. Used with `crucihil run --tags` to filter tests.
+</ParamField>
+
+<ParamField path="requirements" type="list[string]">
+  Requirement IDs this test covers (e.g. `REQ-ENG-001`). Shown in reports.
+</ParamField>
+
+<ParamField path="ticket" type="string">
+  Associated issue/ticket number (e.g. `ENG-412`, `JIRA-100`). Shown in reports.
+</ParamField>
+
+### Setup and teardown
+
+Setup and teardown steps run before and after the test function respectively. Teardown always runs, even if the test fails (Rule R8).
+
+```yaml
+setup:
+  - sim.set:   { signal: "EngineData.RPM", value: 1500.0 }
+  - sim.start: EngineData
+  - power.on:  ecu_main
+  - gpio.set:  { pin: ignition_enable, value: true }
+
+teardown:
+  - sim.stop:  EngineData
+  - power.off: ecu_main
+```
+
+**Available setup actions:**
+
+| Action | Params | Description |
+|---|---|---|
+| `sim.set` | `signal`, `value` | Set a simulated signal value |
+| `sim.start` | `target` (message name) | Start BSE scheduling for a message |
+| `sim.stop` | `target` (message name) | Stop BSE scheduling for a message |
+| `sim.start_all` | — | Start all scheduled messages |
+| `power.on` | `target` (rail name) | Turn on a power rail |
+| `power.off` | `target` (rail name) | Turn off a power rail |
+| `gpio.set` | `pin`, `value` | Set a GPIO output pin |
+
+### Fault injection
+
+Faults declared here are automatically injected around the test and cleaned up after:
+
+```yaml
+faults:
+  - can_dropout: { arb_id: 0x200, duration: 2.0 }
+  - power_cycle: { rail: ecu_main, off_duration: 0.1 }
+```
+
+**Available fault types:**
+
+| Type | Params | Description |
+|---|---|---|
+| `can_dropout` | `arb_id`, `duration` | Suppress TX and RX of a specific CAN ID |
+| `can_noise` | `arb_id`, `bit_error_rate` | Inject random bit errors into a CAN message |
+| `power_cycle` | `rail`, `off_duration` | Power-cycle a rail |
+| `gpio_stuck` | `pin`, `value`, `duration` | Hold a GPIO pin at a fixed value |
+
+### Signal recording
+
+```yaml
+record:
+  signals:
+    - EngineData.RPM
+    - VehicleSpeed.Speed
+    - BrakeStatus.Pressure
+```
+
+<ParamField path="record.signals" type="list[string]">
+  Signals to capture during the test. Recorded as time-value pairs. Available in results detail and via `get_signal_trace` MCP tool.
+</ParamField>
+
+### Python implementation
+
+<ParamField path="module" type="string">
+  Dotted Python module path containing the test function (e.g. `tests.suites.engine_functions`). Resolved against `sys.path`.
+</ParamField>
+
+<ParamField path="function" type="string">
+  Name of the async Python function to call (e.g. `test_engine_startup`).
+</ParamField>
+
+<ParamField path="params" type="dict">
+  Keyword arguments forwarded to the test function. The function must accept these as named parameters in addition to `rig: Rig`.
+
+  ```yaml
+  params:
+    expected_rpm: 800.0
+    timeout: 2.0
+  ```
+
+  ```python
+  async def test_engine_startup(rig: Rig, expected_rpm: float, timeout: float):
+      ...
+  ```
+</ParamField>
+
+## Running only a subset of tests
+
+```bash
+# By tag
+crucihil run --suite suites/regression.yaml --rig rigs/virtual.toml --tags engine
+
+# By suite type
+crucihil run --suite suites/regression.yaml --rig rigs/virtual.toml --suite-type smoke
+
+# Combine
+crucihil run --suite suites/regression.yaml --rig rigs/virtual.toml \
+  --tags engine,startup --suite-type smoke
+```
+
+## See also
+
+- [Python API Reference](/test-authoring/python-api)
+- [`crucihil run`](/cli/run)
+- [`crucihil stub`](/cli/scaffold) — generate missing Python stubs for a manifest

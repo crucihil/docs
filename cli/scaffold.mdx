@@ -1,0 +1,191 @@
+---
+title: "crucihil scaffold"
+description: "Generate a test project, custom backend stub, or runnable example"
+---
+
+## Synopsis
+
+```bash
+crucihil scaffold [--rig <path>] [--example <name>] [--adapter <type>] [options]
+```
+
+## Description
+
+`crucihil scaffold` generates boilerplate so you can start writing tests immediately. It has three modes:
+
+| Mode | Flag | What it creates |
+|---|---|---|
+| Test project | `--rig` | Full test project tailored to your rig's hardware |
+| Example | `--example` | Self-contained runnable example with DBC, rig TOML, and test |
+| Adapter | `--adapter` | Custom backend stub implementing the relevant ABC |
+
+## Options
+
+<ParamField path="--rig" type="path">
+  Path to a rig TOML. Reads the TOML and generates `suites/smoke.yaml`, `suites/regression.yaml`, `tests/smoke.py`, and `tests/regression.py` tailored to the detected hardware (CAN buses, ECUs, power rails). Short form: `-r`.
+</ParamField>
+
+<ParamField path="--example" type="string">
+  Drop a self-contained runnable example. Available names: `hello_world`, `can_signals`, `fault_injection`. Short form: `-e`.
+</ParamField>
+
+<ParamField path="--adapter" type="string">
+  Generate a custom backend adapter stub. Available types: `can`, `power`, `gpio`, `doip`, `someip`, `udp`, `uds`. Short form: `-a`.
+</ParamField>
+
+<ParamField path="--name" type="string">
+  Class name for an adapter stub. Example: `--adapter can --name RelayBoard` generates a `RelayBoardBackend` class. Defaults to `Custom<Type>`. Short form: `-n`.
+</ParamField>
+
+<ParamField path="--output-dir" type="path" default=".">
+  Directory to write generated files into. Short form: `-d`.
+</ParamField>
+
+## Test project from a rig TOML
+
+```bash
+crucihil scaffold --rig rigs/bench_01.toml
+```
+
+Reads `bench_01.toml` and generates:
+
+```
+suites/
+├── smoke.yaml         # smoke suite — fast, critical path
+└── regression.yaml    # full regression suite
+tests/
+├── __init__.py
+├── smoke.py           # stub functions for smoke tests
+└── regression.py      # stub functions for regression tests
+```
+
+The generated YAML manifests reference the signals and ECUs from your rig TOML. For example, if your TOML has `[rig.ecus.engine_ecu]` and `[rig.can.powertrain]`, the scaffold creates test stubs that reference those.
+
+After scaffolding, fill in the `pass` stubs with real assertions:
+
+```bash
+crucihil run --suite suites/smoke.yaml --rig rigs/virtual.toml
+```
+
+The stubs pass immediately (they contain `pass`), giving you a working baseline to build from.
+
+## Examples
+
+### hello_world
+
+A minimal three-test suite with a virtual rig and sample DBC:
+
+```bash
+crucihil scaffold --example hello_world
+```
+
+Creates:
+
+```
+hello_world/
+├── rigs/virtual.toml
+├── defs/vehicle_can.dbc
+├── suites/hello_world.yaml
+└── tests/hello_world.py
+```
+
+Run it immediately:
+
+```bash
+cd hello_world
+crucihil run --suite suites/hello_world.yaml --rig rigs/virtual.toml
+```
+
+### can_signals
+
+Demonstrates `rig.can.send`, `rig.can.expect`, `rig.sim.set`, and `rig.sim.override`:
+
+```bash
+crucihil scaffold --example can_signals
+```
+
+### fault_injection
+
+Demonstrates the fault injection API — `rig.fault.can_dropout`, `rig.fault.power_cycle`, `rig.fault.gpio_stuck`:
+
+```bash
+crucihil scaffold --example fault_injection
+```
+
+## Custom backend adapters
+
+If you have a proprietary CAN adapter, power supply, or GPIO board, you can implement it as a Python class and load it via `backend = "myorg.my_module"` in the rig TOML. The scaffold generates the correct boilerplate:
+
+### CAN adapter stub
+
+```bash
+crucihil scaffold --adapter can --name RelayBoard
+```
+
+Generates `relay_board_backend.py`:
+
+```python
+"""RelayBoard custom CAN backend.
+
+Load with:
+    backend = "relay_board_backend.RelayBoardBackend"
+in [rig.can.<name>] in your rig TOML.
+"""
+from crucihil.hal.backends.base import AbstractCANBackend
+from crucihil.hal.models.frames import CANFrame
+
+
+class RelayBoardBackend(AbstractCANBackend):
+    async def connect(self) -> None:
+        # TODO: open connection to hardware
+        pass
+
+    async def disconnect(self) -> None:
+        # TODO: close connection
+        pass
+
+    async def send(self, arb_id: int, data: bytes) -> None:
+        # TODO: send frame
+        pass
+
+    async def receive(self, timeout: float = 1.0) -> CANFrame:
+        # TODO: receive frame
+        raise NotImplementedError
+
+    async def set_bitrate(self, bitrate: int) -> None:
+        pass
+```
+
+### Power backend stub
+
+```bash
+crucihil scaffold --adapter power --name BenchPSU
+```
+
+### GPIO backend stub
+
+```bash
+crucihil scaffold --adapter gpio --name USBRelay
+```
+
+## Stub generation (crucihil stub)
+
+After adding new test IDs to a YAML manifest, run `crucihil stub` to generate the missing Python function stubs:
+
+```bash
+crucihil stub --suite suites/regression.yaml
+```
+
+This appends typed `async def test_*` stubs for every test function that is declared in the YAML but missing from the corresponding Python module.
+
+Use `--dry-run` to preview what would be written:
+
+```bash
+crucihil stub --suite suites/regression.yaml --dry-run
+```
+
+## See also
+
+- [Test Authoring — YAML Manifest](/test-authoring/yaml-manifest)
+- [Test Authoring — Python API](/test-authoring/python-api)
+- [Rig Backends](/rig-config/backends) — custom backend module path format
