@@ -8,65 +8,44 @@ description: "Install CruciHiL with pip — base package or with optional extras
 - Python **3.10 or later** (3.11+ recommended)
 - pip
 
-CruciHiL is a pure-Python package with no C extensions in the base install. The `[analyze]` extra adds tree-sitter for C/C++ parsing.
+CruciHiL is a pure-Python package with no C extensions in the base install.
 
-## Base install
+## Install
+
+We recommend a virtual environment:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate          # Linux / macOS
+# .venv\Scripts\activate.bat       # Windows
+
 pip install crucihil
 ```
 
-The base package includes:
+Verify:
 
-- `crucihil run` — test runner
-- `crucihil init` — interactive rig setup wizard
-- `crucihil discover` — AI-assisted rig TOML generation
-- `crucihil agent` — local agent daemon
-- `crucihil scaffold` — test project scaffolding
-- `crucihil stub` — Python stub generation
-- Virtual backends (CAN, SOME/IP, DoIP, Power, GPIO)
-- YAML manifest loader and validator
-- JUnit XML and HTML reporters
-- MCP server (all 14 tools)
+```bash
+crucihil version
+# crucihil 0.15.0
+```
 
 ## Optional extras
 
-| Extra | Install command | What it adds |
+The base install covers everything in the quickstart. Install extras when you need them:
+
+| Extra | Command | What it adds |
 |---|---|---|
-| `analyze` | `pip install 'crucihil[analyze]'` | `crucihil analyze`, `analyze_component` MCP tool — tree-sitter C/C++ parser |
-| `socketcan` | `pip install 'crucihil[socketcan]'` | SocketCAN backend for Linux CAN interfaces |
-| `peak` | `pip install 'crucihil[peak]'` | PEAK PCAN adapter backend (Windows/Linux) |
+| `analyze` | `pip install 'crucihil[analyze]'` | `crucihil analyze` — tree-sitter C/C++ parser for AI signal mapping |
+| `socketcan` | `pip install 'crucihil[socketcan]'` | SocketCAN backend (Linux CAN interfaces) |
+| `peak` | `pip install 'crucihil[peak]'` | PEAK PCAN adapter backend (Windows / Linux) |
 | `server` | `pip install 'crucihil[server]'` | FastAPI control plane + PostgreSQL |
-| `all` | `pip install 'crucihil[all]'` | Everything above |
+| `all` | `pip install 'crucihil[all]'` | All of the above |
 
-### Install with SWC analysis
+<Note>
+`crucihil analyze` and the `analyze_component` MCP tool require `crucihil[analyze]`. The base package will not import or reference tree-sitter.
+</Note>
 
-```bash
-pip install 'crucihil[analyze]'
-```
-
-This adds:
-- `tree-sitter` — incremental C/C++ parser
-- `tree-sitter-c` — C grammar
-- `tree-sitter-cpp` — C++ grammar
-
-These are required by `crucihil analyze` and the `analyze_component` MCP tool. The base package will not import or reference them.
-
-### Install with SocketCAN support (Linux)
-
-```bash
-pip install 'crucihil[socketcan]'
-```
-
-Required to use `backend = "socketcan"` in rig TOML on Linux. Uses `python-can`'s socketcan interface.
-
-### Install everything
-
-```bash
-pip install 'crucihil[all]'
-```
-
-## From source
+## Install from source
 
 ```bash
 git clone https://github.com/crucihil/crucihil.git
@@ -74,21 +53,15 @@ cd crucihil
 pip install -e '.[analyze]'
 ```
 
-Verify:
+## Platform notes
 
-```bash
-crucihil version
-```
+| Platform | Notes |
+|---|---|
+| Linux | Full support. SocketCAN backend works natively. |
+| macOS | Full support for virtual backend. SocketCAN requires a USB adapter with a macOS driver. |
+| Windows | Full support for virtual and PEAK backends. SocketCAN not available. |
 
-## Virtual environment (recommended)
-
-```bash
-python -m venv .venv
-source .venv/bin/activate          # Linux/macOS
-# or: .venv\Scripts\activate.bat   # Windows
-
-pip install crucihil
-```
+The virtual backend works identically on all platforms — use it for CI and local development regardless of OS.
 
 ## Upgrading
 
@@ -98,28 +71,8 @@ pip install --upgrade crucihil
 pip install --upgrade 'crucihil[analyze]'
 ```
 
-## Verifying the install
+---
 
-```bash
-# Check version
-crucihil version
-
-# Run a self-contained smoke test (no hardware needed)
-crucihil scaffold --example hello_world --output-dir /tmp/crucihil-smoke
-cd /tmp/crucihil-smoke
-crucihil run --suite suites/hello_world.yaml --rig rigs/virtual.toml
-```
-
-All tests should pass against the virtual backend.
-
-## Platform notes
-
-| Platform | Notes |
-|---|---|
-| Linux | Full support. SocketCAN backend works natively. |
-| macOS | Full support for virtual backend. SocketCAN requires a USB adapter with a macOS driver. |
-| Windows | Full support for virtual and PEAK backends. SocketCAN is not available. |
-
-<Info>
-The virtual backend works identically on all platforms — no OS-specific dependencies. Use it for CI and local development regardless of platform.
-</Info>
+<Card title="Quickstart →" icon="rocket" href="/quickstart">
+  Run your first test against the virtual backend — no hardware required.
+</Card>

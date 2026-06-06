@@ -3,63 +3,43 @@ title: "Introduction"
 description: "CruciHiL — bulletproof Hardware-in-the-Loop testing for firmware teams"
 ---
 
-# CruciHiL
-
-CruciHiL is a Hardware-in-the-Loop (HiL) testing platform that catches firmware regressions before they reach the field. Write tests in Python, run them against virtual simulation before hardware exists, then run identical tests against real hardware with zero code changes.
-
-<CardGroup cols={2}>
-  <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Run your first test in under five minutes — no hardware required.
-  </Card>
-  <Card title="crucihil analyze" icon="magnifying-glass-chart" href="/cli/analyze">
-    Extract the signal interface contract of any C/C++ firmware component.
-  </Card>
-  <Card title="Rig Configuration" icon="sliders" href="/rig-config/overview">
-    Configure CAN, Ethernet, power, GPIO, and ECU connections in TOML.
-  </Card>
-  <Card title="MCP Tools" icon="robot" href="/mcp/overview">
-    Connect Claude, Copilot, or Cursor directly to your test infrastructure.
-  </Card>
-</CardGroup>
+CruciHiL is a Hardware-in-the-Loop (HiL) testing platform that catches firmware regressions before they reach the field. Write tests in Python, run them against virtual simulation before hardware exists, then run the same tests against real hardware — with zero code changes.
 
 ## What CruciHiL solves
 
 Firmware teams waste enormous time on two problems:
 
-1. **Test authoring friction** — figuring out which signals a component actually reads and writes takes days of reading code, tracing RTE wrappers, and asking around.
-2. **Hardware dependency** — tests can't run until hardware is built, so regressions are found late and fixes are expensive.
+**Test authoring friction.** Figuring out which signals a firmware component actually reads and writes takes days of reading code, tracing AUTOSAR RTE wrappers, and asking around. CruciHiL's `crucihil analyze` command does this with static analysis and AI in minutes.
 
-CruciHiL attacks both. The `crucihil analyze` command uses static analysis and AI to extract the signal interface contract of any C/C++ component in minutes. The virtual backend lets tests run in CI with no hardware at all, using the same test code that will later run against a real ECU.
+**Hardware dependency.** Tests can't run until hardware is built, so regressions are caught late and fixes are expensive. CruciHiL's virtual backend runs identical tests in CI with no hardware at all — on day one.
 
-## Architecture
-
-CruciHiL is organized in six layers. Every component maps to exactly one layer.
+## How it works
 
 ```
 Layer 6 — Interfaces      CLI · Web Dashboard · CI/CD webhooks
-Layer 5 — AI Interface    MCP Server (FastMCP) — 14 tools
+Layer 5 — AI Interface    MCP Server — connect Claude, Copilot, Cursor
 Layer 4 — Cloud Control   FastAPI + PostgreSQL — orchestration and history
 Layer 3 — Local Agent     Test runner · YAML executor · result reporter
 Layer 2 — Rig HAL         rig.can / rig.sim / rig.fault / rig.ecu
 Layer 1 — Hardware        CAN · Ethernet · GPIO · Power · ECUs
 ```
 
-The key property of this architecture: **Layer 2 (the Rig HAL) is the only layer that knows about hardware.** Test code in Layer 3 uses `rig.can.send(...)` and `rig.can.expect(...)` — not "socketcan" or "can0". When you swap from a virtual backend to a PEAK CAN adapter, only the TOML changes. The test file is identical.
+The key design invariant: **Layer 2 (the Rig HAL) is the only layer that knows about hardware.** Test code uses `rig.can.send(...)` and `rig.can.expect(...)` — never "socketcan" or "can0". When you swap from a virtual backend to a PEAK CAN adapter, only the TOML changes. The test file is identical.
 
-## Key value props
+## Key capabilities
 
 <CardGroup cols={3}>
-  <Card title="Virtual-first" icon="microchip">
-    Every test runs against an in-process virtual backend before any hardware exists. CI works on day one.
+  <Card title="Virtual-first CI" icon="microchip">
+    Every test runs against an in-process virtual backend before hardware exists. CI works on day one.
   </Card>
   <Card title="Zero test changes" icon="arrows-rotate">
-    Switch from virtual to real hardware by changing one line in a TOML file. Test code is hardware-agnostic by design.
+    Switch virtual → real hardware by changing one line in a TOML file. Test code is hardware-agnostic by design.
   </Card>
   <Card title="AI signal mapping" icon="brain">
-    `crucihil analyze` maps AUTOSAR RTE and COM module identifiers to DBC signal names using AI — no more manual tracing.
+    `crucihil analyze` maps AUTOSAR RTE and COM identifiers to DBC signal names using static analysis and AI.
   </Card>
   <Card title="Python-native" icon="python">
-    Tests are async Python functions. No proprietary scripting language. Use your existing editor, linter, and CI toolchain.
+    Tests are async Python functions. No proprietary scripting language. Use your existing editor and CI toolchain.
   </Card>
   <Card title="MCP-connected" icon="plug">
     Claude, Copilot, and Cursor can query rigs, run tests, and explain failures through the built-in MCP server.
@@ -69,24 +49,8 @@ The key property of this architecture: **Layer 2 (the Rig HAL) is the only layer
   </Card>
 </CardGroup>
 
-## Stack
+## Start here
 
-| Component | Technology |
-|---|---|
-| Test runner | Python 3.10+, asyncio |
-| Control plane | FastAPI + PostgreSQL |
-| Web dashboard | React 18 + TypeScript |
-| AI interface | FastMCP (MCP server) |
-| Config | TOML + Pydantic validation |
-| CAN | python-can, cantools |
-
-## Next steps
-
-<CardGroup cols={2}>
-  <Card title="Install CruciHiL" icon="download" href="/installation">
-    `pip install crucihil` or `pip install 'crucihil[analyze]'`
-  </Card>
-  <Card title="Run your first test" icon="play" href="/quickstart">
-    Five steps from install to passing test.
-  </Card>
-</CardGroup>
+<Card title="Installation →" icon="download" href="/installation">
+  Install CruciHiL and run your first test in under five minutes.
+</Card>
